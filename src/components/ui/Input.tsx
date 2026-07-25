@@ -8,7 +8,7 @@ export function Input({ label, className = '', ...props }: InputProps) {
   return (
     <div className="w-full">
       {label && (
-        <label className="block text-sm font-medium text-secondary mb-1.5">
+        <label className="block text-sm font-medium mb-1.5" style={{ color: '#6B7280' }}>
           {label}
         </label>
       )}

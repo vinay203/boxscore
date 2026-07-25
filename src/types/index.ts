@@ -49,6 +49,7 @@ export interface Innings {
   currentBowlerId: string
   status: InningsStatus
   pendingBowlerSelection: boolean
+  pendingBatsmanSelection?: boolean
 }
 
 export interface Match {

@@ -1,6 +1,5 @@
 import { useState } from 'react'
 import { ChevronDown, ChevronUp, Share2, Trophy } from 'lucide-react'
-import toast from 'react-hot-toast'
 import { Button } from './ui/Button'
 import { Card } from './ui/Card'
 import { PageTransition } from './ui/PageTransition'
@@ -35,35 +34,28 @@ export function MatchSummaryScreen() {
     ].join('\n')
 
     if (navigator.share) {
-      try {
-        await navigator.share({ title: 'BoxScore', text })
-      } catch {
-        // user cancelled
-      }
+      try { await navigator.share({ title: 'BoxScore', text }) } catch { /* cancelled */ }
     } else {
       await navigator.clipboard.writeText(text)
-      toast.success('Score copied to clipboard!')
     }
   }
 
   return (
     <PageTransition>
-      <div className="summary-winner text-center mb-6 shadow-card">
+      <div className="summary-winner text-center mb-6">
         <div className="confetti" aria-hidden="true">
           {Array.from({ length: 12 }).map((_, i) => <i key={i} style={{ left: `${7 + i * 8}%`, animationDelay: `${i * 0.1}s` }} />)}
         </div>
-        <Trophy className="w-10 h-10 mx-auto mb-3" />
+        <Trophy className="w-9 h-9 mx-auto mb-3" style={{ color: '#fff', opacity: 0.8 }} />
         <p className="team-label mb-2">{result.winnerId ? getTeamById(match, result.winnerId).name : 'Final result'}</p>
         <p className="result-title">{result.text.toUpperCase()}</p>
       </div>
 
       <Card className="potm-card mb-4">
-        <p className="text-xs font-medium text-secondary uppercase mb-2">
-          Player of the Match
-        </p>
-        <p className="font-bold text-heading text-lg">{potm.name}</p>
-        <p className="text-sm text-secondary">{potm.teamName}</p>
-        <p className="text-heading font-semibold text-sm mt-1">{potm.stat}</p>
+        <p className="text-xs font-medium uppercase mb-2" style={{ color: '#BBB' }}>Player of the Match</p>
+        <p className="font-bold text-lg" style={{ color: '#111' }}>{potm.name}</p>
+        <p className="text-sm" style={{ color: '#888' }}>{potm.teamName}</p>
+        <p className="font-semibold text-sm mt-1" style={{ color: '#111' }}>{potm.stat}</p>
       </Card>
 
       {innings.map((inn, i) => {
@@ -71,28 +63,17 @@ export function MatchSummaryScreen() {
         const runs = getTotalRuns(inn.balls)
         const wkts = getWicketCount(inn.balls)
         const expanded = expandedInnings === i
-
         return (
           <Card key={i} className="mb-3 p-0 overflow-hidden">
-            <button
-              type="button"
-              onClick={() => setExpandedInnings(expanded ? null : i)}
-              className="w-full flex items-center justify-between p-4 text-left btn-press"
-            >
+            <button type="button" onClick={() => setExpandedInnings(expanded ? null : i)} className="w-full flex items-center justify-between p-4 text-left btn-press">
               <div>
-                <p className="font-semibold text-heading">{team.name}</p>
-                <p className="text-sm text-secondary">
-                  {runs} / {wkts} — Innings {i + 1}
-                </p>
+                <p className="font-semibold" style={{ color: '#111' }}>{team.name}</p>
+                <p className="text-sm" style={{ color: '#888' }}>{runs} / {wkts} — Innings {i + 1}</p>
               </div>
-              {expanded ? (
-                <ChevronUp className="text-secondary" size={20} />
-              ) : (
-                <ChevronDown className="text-secondary" size={20} />
-              )}
+              {expanded ? <ChevronUp size={18} style={{ color: '#BBB' }} /> : <ChevronDown size={18} style={{ color: '#BBB' }} />}
             </button>
             {expanded && (
-              <div className="border-t border-slate-100">
+              <div style={{ borderTop: '1px solid #F0F0F0' }}>
                 <ScorecardScreen embedded inningsIndex={i} />
               </div>
             )}
@@ -101,17 +82,9 @@ export function MatchSummaryScreen() {
       })}
 
       <div className="flex flex-col gap-3 mt-4 pb-4">
-        <Button fullWidth onClick={resetToHome}>
-          New Match
-        </Button>
-        <Button
-          fullWidth
-          variant="secondary"
-          onClick={shareScore}
-          className="flex items-center justify-center gap-2"
-        >
-          <Share2 size={18} />
-          Share Score
+        <Button fullWidth onClick={resetToHome}>New Match</Button>
+        <Button fullWidth variant="secondary" onClick={shareScore} className="flex items-center justify-center gap-2">
+          <Share2 size={16} /> Share Score
         </Button>
       </div>
     </PageTransition>

@@ -23,7 +23,7 @@ export function Button({
 }: ButtonProps) {
   return (
     <motion.button
-      whileTap={{ scale: 0.97 }}
+      whileTap={{ scale: 0.96 }}
       className={`btn-press ${variants[variant]} ${fullWidth ? 'w-full' : ''} ${className}`}
       {...(props as object)}
     >

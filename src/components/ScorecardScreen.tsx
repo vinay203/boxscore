@@ -25,7 +25,6 @@ export function ScorecardScreen({ onClose, embedded, inningsIndex: propInningsIn
   const inningsTab = propInningsIndex ?? internalInningsTab
 
   if (!match) return null
-
   const inningsData = innings[inningsTab]
   if (!inningsData) return null
 
@@ -39,36 +38,25 @@ export function ScorecardScreen({ onClose, embedded, inningsIndex: propInningsIn
   for (const b of inningsData.balls) {
     if (!b.extraType || b.extraType === 'noBall') battedIds.add(b.batsmanId)
   }
-
   const didNotBat = battingTeam.players.filter((p) => !battedIds.has(p.id))
 
-  const content = (
-    <div className={embedded ? '' : 'fixed inset-0 z-50 bg-[#f5f5f7] max-w-[430px] mx-auto overflow-y-auto'}>
+  return (
+    <div className={embedded ? '' : 'fixed inset-0 z-50 max-w-[430px] mx-auto overflow-y-auto'} style={embedded ? {} : { background: '#FAFAFA' }}>
       <div className="p-5">
         {!embedded && onClose && (
-          <button
-            type="button"
-            onClick={onClose}
-            className="absolute top-4 right-5 p-2 text-secondary btn-press"
-          >
-            <X size={22} />
+          <button type="button" onClick={onClose} className="absolute top-4 right-5 p-2 btn-press" style={{ color: '#BBB' }}>
+            <X size={20} />
           </button>
         )}
-
-        <h2 className="text-xl font-bold text-heading mb-1">Scorecard</h2>
-        <p className="text-sm text-secondary mb-4">
-          {getTotalRuns(inningsData.balls)} / {getWicketCount(inningsData.balls)} ({inningsTab + 1}st innings)
+        <h2 className="text-xl font-bold mb-1" style={{ color: '#111' }}>Scorecard</h2>
+        <p className="text-sm mb-4" style={{ color: '#999' }}>
+          {getTotalRuns(inningsData.balls)} / {getWicketCount(inningsData.balls)} ({inningsTab === 0 ? '1st' : '2nd'} innings)
         </p>
 
         {innings.length > 1 && propInningsIndex === undefined && (
           <div className="tab-switcher">
             {innings.map((_, i) => (
-              <button
-                key={i}
-                type="button"
-                onClick={() => setInternalInningsTab(i)}
-                className={`tab-button ${inningsTab === i ? 'active' : ''}`}
-              >
+              <button key={i} type="button" onClick={() => setInternalInningsTab(i)} className={`tab-button ${inningsTab === i ? 'active' : ''}`}>
                 Innings {i + 1}
               </button>
             ))}
@@ -76,20 +64,8 @@ export function ScorecardScreen({ onClose, embedded, inningsIndex: propInningsIn
         )}
 
         <div className="tab-switcher">
-          <button
-            type="button"
-            onClick={() => setTab('batting')}
-            className={`tab-button ${tab === 'batting' ? 'active' : ''}`}
-          >
-            Batting
-          </button>
-          <button
-            type="button"
-            onClick={() => setTab('bowling')}
-            className={`tab-button ${tab === 'bowling' ? 'active' : ''}`}
-          >
-            Bowling
-          </button>
+          <button type="button" onClick={() => setTab('batting')} className={`tab-button ${tab === 'batting' ? 'active' : ''}`}>Batting</button>
+          <button type="button" onClick={() => setTab('bowling')} className={`tab-button ${tab === 'bowling' ? 'active' : ''}`}>Bowling</button>
         </div>
 
         {tab === 'batting' && (
@@ -97,51 +73,32 @@ export function ScorecardScreen({ onClose, embedded, inningsIndex: propInningsIn
             <div className="overflow-x-auto">
               <table className="score-table w-full text-xs">
                 <thead>
-                  <tr className="bg-slate-50 text-secondary uppercase">
-                    <th className="text-left px-3 py-2 font-medium">Player</th>
-                    <th className="px-2 py-2 font-medium">R</th>
-                    <th className="px-2 py-2 font-medium">B</th>
-                    <th className="px-2 py-2 font-medium">4s</th>
-                    <th className="px-2 py-2 font-medium">6s</th>
-                    <th className="px-2 py-2 font-medium">SR</th>
+                  <tr style={{ background: '#F5F5F5' }}>
+                    <th className="text-left px-3 py-2 font-medium" style={{ color: '#BBB' }}>Player</th>
+                    <th className="px-2 py-2 font-medium" style={{ color: '#BBB' }}>R</th>
+                    <th className="px-2 py-2 font-medium" style={{ color: '#BBB' }}>B</th>
+                    <th className="px-2 py-2 font-medium" style={{ color: '#BBB' }}>4s</th>
+                    <th className="px-2 py-2 font-medium" style={{ color: '#BBB' }}>6s</th>
+                    <th className="px-2 py-2 font-medium" style={{ color: '#BBB' }}>SR</th>
                   </tr>
                 </thead>
                 <tbody>
                   {battingTeam.players.map((player) => {
-                    const stats = getBattingStats(
-                      inningsData.balls,
-                      player.id,
-                      battingTeam.players,
-                    )
+                    const stats = getBattingStats(inningsData.balls, player.id, battingTeam.players)
                     const isCurrent = currentIds.includes(player.id)
                     const hasBatted = battedIds.has(player.id) || stats.isOut
-
                     if (!hasBatted && !stats.isOut) return null
-
                     return (
-                      <tr
-                        key={player.id}
-                        className={`${
-                          isCurrent && inningsData.status === 'live'
-                            ? 'bg-[#f8f8f8] font-semibold'
-                            : ''
-                        } ${stats.isOut ? 'opacity-45' : ''}`}
-                      >
+                      <tr key={player.id} className={`${isCurrent && inningsData.status === 'live' ? 'current-batsman' : ''} ${stats.isOut ? 'out-batsman' : ''}`}>
                         <td className="px-3 py-2">
-                          <span className={isCurrent ? 'font-bold' : ''}>
-                            {player.name}
-                          </span>
-                          {stats.dismissal && (
-                            <p className="text-[10px] text-secondary">{stats.dismissal}</p>
-                          )}
+                          <span className={isCurrent ? 'font-bold' : ''}>{player.name}</span>
+                          {stats.dismissal && <p className="text-[10px]" style={{ color: '#BBB' }}>{stats.dismissal}</p>}
                         </td>
-                        <td className="text-center px-2 py-2">{stats.runs}</td>
+                        <td className="text-center px-2 py-2 font-semibold">{stats.runs}</td>
                         <td className="text-center px-2 py-2">{stats.ballsFaced}</td>
                         <td className="text-center px-2 py-2">{stats.fours}</td>
                         <td className="text-center px-2 py-2">{stats.sixes}</td>
-                        <td className="text-center px-2 py-2">
-                          {stats.strikeRate.toFixed(0)}
-                        </td>
+                        <td className="text-center px-2 py-2">{stats.strikeRate.toFixed(0)}</td>
                       </tr>
                     )
                   })}
@@ -149,15 +106,15 @@ export function ScorecardScreen({ onClose, embedded, inningsIndex: propInningsIn
               </table>
             </div>
             {didNotBat.length > 0 && (
-              <p className="px-3 py-2 text-xs italic text-[#a1a1aa] border-t border-slate-50">
+              <p className="px-3 py-2 text-xs italic" style={{ color: '#CCC', borderTop: '1px solid #F0F0F0' }}>
                 Did not bat: {didNotBat.map((p) => p.name).join(', ')}
               </p>
             )}
-            <p className="px-3 py-2 text-xs text-secondary border-t border-slate-50">
+            <p className="px-3 py-2 text-xs" style={{ color: '#999', borderTop: '1px solid #F0F0F0' }}>
               Extras: {extras.total} (w {extras.wides}, nb {extras.noBalls}, b {extras.byes}, lb {extras.legByes})
             </p>
             {fow.length > 0 && (
-              <p className="px-3 py-2 text-xs text-secondary border-t border-slate-50">
+              <p className="px-3 py-2 text-xs" style={{ color: '#999', borderTop: '1px solid #F0F0F0' }}>
                 FOW: {fow.map((f) => `${f.wicket}-${f.score} (${f.playerName}, ${f.overDisplay} ov)`).join(', ')}
               </p>
             )}
@@ -168,13 +125,13 @@ export function ScorecardScreen({ onClose, embedded, inningsIndex: propInningsIn
           <Card className="p-0 overflow-hidden">
             <table className="score-table w-full text-xs">
               <thead>
-                <tr className="bg-slate-50 text-secondary uppercase">
-                  <th className="text-left px-3 py-2 font-medium">Bowler</th>
-                  <th className="px-2 py-2 font-medium">O</th>
-                  <th className="px-2 py-2 font-medium">M</th>
-                  <th className="px-2 py-2 font-medium">R</th>
-                  <th className="px-2 py-2 font-medium">W</th>
-                  <th className="px-2 py-2 font-medium">Eco</th>
+                <tr style={{ background: '#F5F5F5' }}>
+                  <th className="text-left px-3 py-2 font-medium" style={{ color: '#BBB' }}>Bowler</th>
+                  <th className="px-2 py-2 font-medium" style={{ color: '#BBB' }}>O</th>
+                  <th className="px-2 py-2 font-medium" style={{ color: '#BBB' }}>M</th>
+                  <th className="px-2 py-2 font-medium" style={{ color: '#BBB' }}>R</th>
+                  <th className="px-2 py-2 font-medium" style={{ color: '#BBB' }}>W</th>
+                  <th className="px-2 py-2 font-medium" style={{ color: '#BBB' }}>Eco</th>
                 </tr>
               </thead>
               <tbody>
@@ -182,13 +139,15 @@ export function ScorecardScreen({ onClose, embedded, inningsIndex: propInningsIn
                   const stats = getBowlingStats(inningsData.balls, player.id)
                   if (stats.legalBalls === 0 && stats.runs === 0) return null
                   return (
-                    <tr key={player.id} className="border-t border-slate-50">
+                    <tr key={player.id} style={{ borderTop: '1px solid #F0F0F0' }}>
                       <td className="px-3 py-2 font-medium">{player.name}</td>
                       <td className="text-center px-2 py-2">{stats.oversDisplay}</td>
                       <td className="text-center px-2 py-2">{stats.maidens}</td>
                       <td className="text-center px-2 py-2">{stats.runs}</td>
                       <td className="text-center px-2 py-2">{stats.wickets}</td>
-                      <td className="text-center px-2 py-2">{stats.economy.toFixed(1)}</td>
+                      <td className={`text-center px-2 py-2 ${stats.economy < 6 ? 'economy good' : stats.economy <= 9 ? 'economy average' : 'economy expensive'}`}>
+                        {stats.economy.toFixed(1)}
+                      </td>
                     </tr>
                   )
                 })}
@@ -199,6 +158,4 @@ export function ScorecardScreen({ onClose, embedded, inningsIndex: propInningsIn
       </div>
     </div>
   )
-
-  return content
 }

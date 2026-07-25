@@ -18,8 +18,8 @@ export function Stepper({
   step = 1,
 }: StepperProps) {
   return (
-    <div className="stepper-row flex items-center justify-between py-3">
-      <span className="text-sm font-medium text-heading">{label}</span>
+    <div className="stepper-row flex items-center justify-between py-3" style={{ borderBottom: '1px solid #F3F4F6' }}>
+      <span className="text-sm font-medium" style={{ color: '#1A1A1A' }}>{label}</span>
       <div className="flex items-center gap-3">
         <button
           type="button"

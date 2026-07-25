@@ -30,6 +30,7 @@ import {
   isInningsComplete,
   isSecondInningsComplete,
   formatScore,
+  getTeamById,
 } from '../utils/cricket'
 
 interface SetupDraft {
@@ -71,9 +72,22 @@ interface AppStore extends MatchState {
     newBatsmanId: string,
   ) => void
   selectBowler: (bowlerId: string) => void
+  cancelBowlerSelection: () => void
+  selectOpeningBatsmen: (strikerId: string, nonStrikerId: string) => void
+  cancelBatsmanSelection: () => void
+  retireBatsman: (isStriker: boolean, newBatsmanId: string) => void
+  updateLiveMatchNames: (
+    team1Name: string,
+    team1Players: string[],
+    team2Name: string,
+    team2Players: string[],
+  ) => void
   undoLastBall: () => void
   startSecondInnings: () => void
   finishMatch: () => void
+  swapBatsmen: () => void
+  endInningsEarly: () => void
+  changeBowlerRequest: () => void
 }
 
 const defaultDraft = (): SetupDraft => ({
@@ -109,10 +123,14 @@ function createInitialInnings(
     battingTeamId,
     bowlingTeamId,
     balls: [],
-    currentBatsmanIds: [battingTeam.players[0].id, battingTeam.players[1].id],
+    currentBatsmanIds: [
+      battingTeam.players[0]?.id || '',
+      battingTeam.players[1]?.id || '',
+    ],
     currentBowlerId: '',
     status: 'live',
     pendingBowlerSelection: true,
+    pendingBatsmanSelection: true,
   }
 }
 
@@ -156,6 +174,8 @@ function applyDelivery(
   const runs = getBallRuns(ball)
   const legalAfter = getLegalBallCount(newBalls)
 
+  let bowlerId = current.currentBowlerId
+
   if (ball.isLegalDelivery && runs % 2 === 1) {
     batsmanIds = rotateStrike(batsmanIds)
   }
@@ -163,12 +183,14 @@ function applyDelivery(
   if (ball.isLegalDelivery && legalAfter > 0 && legalAfter % 6 === 0) {
     batsmanIds = rotateStrike(batsmanIds)
     pendingBowler = true
+    bowlerId = ''
   }
 
   const innings: Innings = {
     ...current,
     balls: newBalls,
     currentBatsmanIds: batsmanIds,
+    currentBowlerId: bowlerId,
     pendingBowlerSelection: pendingBowler,
     status: 'live',
   }
@@ -187,7 +209,10 @@ function rebuildBatsmenFromBalls(
   battingTeamId: string,
 ): [string, string] {
   const team = battingTeamId === match.team1.id ? match.team1 : match.team2
-  let ids: [string, string] = [team.players[0].id, team.players[1].id]
+  let ids: [string, string] = [
+    team.players[0]?.id || '',
+    team.players[1]?.id || '',
+  ]
   let legalCount = 0
 
   for (let i = 0; i < balls.length; i++) {
@@ -350,7 +375,12 @@ export const useMatchStore = create<AppStore>((set, get) => ({
     if (!match || state.matchStatus !== 'live') return
 
     const current = innings[currentInningsIndex]
-    if (current.pendingBowlerSelection || !current.currentBowlerId) return
+    if (
+      current.pendingBowlerSelection ||
+      current.pendingBatsmanSelection ||
+      !current.currentBowlerId
+    )
+      return
     if (current.status === 'complete') return
 
     const { over, ball } = getOverBallNumbers(current.balls)
@@ -395,7 +425,12 @@ export const useMatchStore = create<AppStore>((set, get) => ({
     if (!match || state.matchStatus !== 'live') return
 
     const current = innings[currentInningsIndex]
-    if (current.pendingBowlerSelection || !current.currentBowlerId) return
+    if (
+      current.pendingBowlerSelection ||
+      current.pendingBatsmanSelection ||
+      !current.currentBowlerId
+    )
+      return
     if (current.status === 'complete') return
 
     const isLegal = type === 'bye' || type === 'legBye'
@@ -443,7 +478,12 @@ export const useMatchStore = create<AppStore>((set, get) => ({
     if (!match || state.matchStatus !== 'live') return
 
     const current = innings[currentInningsIndex]
-    if (current.pendingBowlerSelection || !current.currentBowlerId) return
+    if (
+      current.pendingBowlerSelection ||
+      current.pendingBatsmanSelection ||
+      !current.currentBowlerId
+    )
+      return
     if (current.status === 'complete') return
 
     const { over, ball } = getOverBallNumbers(current.balls)
@@ -467,10 +507,18 @@ export const useMatchStore = create<AppStore>((set, get) => ({
     let batsmanIds: [string, string] = [...current.currentBatsmanIds]
 
     if (!allOut) {
+      const battingTeam = getTeamById(match, current.battingTeamId)
+      const outSoFar = getOutPlayerIds([...current.balls, ballRecord])
+      const available = battingTeam.players.filter(
+        (p) => !outSoFar.has(p.id) && !current.currentBatsmanIds.includes(p.id),
+      )
+      const actualNewId =
+        newBatsmanId || available[0]?.id || current.currentBatsmanIds[0]
+
       if (strikerWasOut) {
-        batsmanIds = [newBatsmanId, current.currentBatsmanIds[1]]
+        batsmanIds = [actualNewId, current.currentBatsmanIds[1]]
       } else {
-        batsmanIds = [current.currentBatsmanIds[0], newBatsmanId]
+        batsmanIds = [current.currentBatsmanIds[0], actualNewId]
       }
     }
 
@@ -524,6 +572,145 @@ export const useMatchStore = create<AppStore>((set, get) => ({
 
     persist(newState)
     set(newState)
+  },
+
+  cancelBowlerSelection: () => {
+    const state = get()
+    const { match, innings, currentInningsIndex } = state
+    if (!match) return
+    const current = innings[currentInningsIndex]
+    if (!current) return
+    const updated: Innings = {
+      ...current,
+      pendingBowlerSelection: false,
+    }
+    const newInnings = [...innings]
+    newInnings[currentInningsIndex] = updated
+    const newState: MatchState = {
+      match,
+      innings: newInnings,
+      currentInningsIndex,
+      matchStatus: state.matchStatus,
+    }
+    persist(newState)
+    set(newState)
+  },
+
+  selectOpeningBatsmen: (strikerId, nonStrikerId) => {
+    const state = get()
+    const { match, innings, currentInningsIndex } = state
+    if (!match) return
+
+    const current = innings[currentInningsIndex]
+    const updated: Innings = {
+      ...current,
+      currentBatsmanIds: [strikerId, nonStrikerId],
+      pendingBatsmanSelection: false,
+    }
+
+    const newInnings = [...innings]
+    newInnings[currentInningsIndex] = updated
+
+    const newState: MatchState = {
+      match,
+      innings: newInnings,
+      currentInningsIndex,
+      matchStatus: state.matchStatus,
+    }
+
+    persist(newState)
+    set(newState)
+  },
+
+  cancelBatsmanSelection: () => {
+    const state = get()
+    const { match, innings, currentInningsIndex } = state
+    if (!match) return
+    const current = innings[currentInningsIndex]
+    if (!current) return
+    const updated: Innings = {
+      ...current,
+      pendingBatsmanSelection: false,
+    }
+    const newInnings = [...innings]
+    newInnings[currentInningsIndex] = updated
+    const newState: MatchState = {
+      match,
+      innings: newInnings,
+      currentInningsIndex,
+      matchStatus: state.matchStatus,
+    }
+    persist(newState)
+    set(newState)
+  },
+
+  retireBatsman: (isStriker, newBatsmanId) => {
+    const state = get()
+    const { match, innings, currentInningsIndex } = state
+    if (!match || state.matchStatus !== 'live') return
+
+    const current = innings[currentInningsIndex]
+    const updatedIds: [string, string] = isStriker
+      ? [newBatsmanId, current.currentBatsmanIds[1]]
+      : [current.currentBatsmanIds[0], newBatsmanId]
+
+    const updated: Innings = {
+      ...current,
+      currentBatsmanIds: updatedIds,
+    }
+
+    const newInnings = [...innings]
+    newInnings[currentInningsIndex] = updated
+
+    const newState: MatchState = {
+      match,
+      innings: newInnings,
+      currentInningsIndex,
+      matchStatus: state.matchStatus,
+    }
+
+    persist(newState)
+    set(newState)
+  },
+
+  updateLiveMatchNames: (t1Name, t1Players, t2Name, t2Players) => {
+    const state = get()
+    const { match } = state
+    if (!match) return
+
+    const newTeam1: Team = {
+      ...match.team1,
+      name: t1Name.trim() || match.team1.name,
+      players: match.team1.players.map((p, i) => ({
+        ...p,
+        name: t1Players[i]?.trim() || p.name,
+      })),
+    }
+
+    const newTeam2: Team = {
+      ...match.team2,
+      name: t2Name.trim() || match.team2.name,
+      players: match.team2.players.map((p, i) => ({
+        ...p,
+        name: t2Players[i]?.trim() || p.name,
+      })),
+    }
+
+    const updatedMatch: Match = {
+      ...match,
+      team1: newTeam1,
+      team2: newTeam2,
+    }
+
+    const newState: MatchState = {
+      match: updatedMatch,
+      innings: state.innings,
+      currentInningsIndex: state.currentInningsIndex,
+      matchStatus: state.matchStatus,
+    }
+
+    persist(newState)
+    set({ ...newState, screen: 'live' })
   },
 
   undoLastBall: () => {
@@ -641,5 +828,94 @@ export const useMatchStore = create<AppStore>((set, get) => ({
       screen: 'summary',
       matchHistory: loadMatchHistory(),
     })
+  },
+
+  swapBatsmen: () => {
+    const state = get()
+    const { match, innings, currentInningsIndex } = state
+    if (!match || state.matchStatus !== 'live') return
+
+    const current = innings[currentInningsIndex]
+    const swapped: Innings = {
+      ...current,
+      currentBatsmanIds: [
+        current.currentBatsmanIds[1],
+        current.currentBatsmanIds[0],
+      ],
+    }
+
+    const newInnings = [...innings]
+    newInnings[currentInningsIndex] = swapped
+
+    const newState: MatchState = {
+      match,
+      innings: newInnings,
+      currentInningsIndex,
+      matchStatus: state.matchStatus,
+    }
+
+    persist(newState)
+    set(newState)
+  },
+
+  endInningsEarly: () => {
+    const state = get()
+    const { match, innings, currentInningsIndex } = state
+    if (!match || state.matchStatus !== 'live') return
+
+    const current = innings[currentInningsIndex]
+    const ended: Innings = {
+      ...current,
+      status: 'complete',
+    }
+
+    const newInnings = [...innings]
+    newInnings[currentInningsIndex] = ended
+
+    if (currentInningsIndex === 0) {
+      const newState: MatchState = {
+        match,
+        innings: newInnings,
+        currentInningsIndex,
+        matchStatus: 'innings_break',
+      }
+      persist(newState)
+      set(newState)
+    } else {
+      const newState: MatchState = {
+        match,
+        innings: newInnings,
+        currentInningsIndex,
+        matchStatus: 'complete',
+      }
+      persist(newState)
+      set(newState)
+      get().finishMatch()
+    }
+  },
+
+  changeBowlerRequest: () => {
+    const state = get()
+    const { match, innings, currentInningsIndex } = state
+    if (!match || state.matchStatus !== 'live') return
+
+    const current = innings[currentInningsIndex]
+    const updated: Innings = {
+      ...current,
+      pendingBowlerSelection: true,
+    }
+
+    const newInnings = [...innings]
+    newInnings[currentInningsIndex] = updated
+
+    const newState: MatchState = {
+      match,
+      innings: newInnings,
+      currentInningsIndex,
+      matchStatus: state.matchStatus,
+    }
+
+    persist(newState)
+    set(newState)
   },
 }))
