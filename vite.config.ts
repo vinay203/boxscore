@@ -2,6 +2,16 @@ import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 import { VitePWA } from 'vite-plugin-pwa'
+import fs from 'node:fs'
+
+try {
+  const realCwd = fs.realpathSync(process.cwd())
+  if (realCwd.toLowerCase() !== process.cwd().toLowerCase()) {
+    process.chdir(realCwd)
+  }
+} catch {
+  // ignore
+}
 
 export default defineConfig({
   plugins: [
@@ -14,8 +24,8 @@ export default defineConfig({
         name: 'BoxScore - Box Cricket Scorer',
         short_name: 'BoxScore',
         description: 'Your pocket cricket scorer',
-        theme_color: '#22C55E',
-        background_color: '#FFFFFF',
+        theme_color: '#FAFAFA',
+        background_color: '#FAFAFA',
         display: 'standalone',
         orientation: 'portrait',
         icons: [

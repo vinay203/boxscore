@@ -13,6 +13,9 @@ import type {
 } from '../types'
 import {
   clearCurrentMatch,
+  clearMatchHistory,
+  deleteFromHistory,
+  hasResumableMatch,
   loadCurrentMatch,
   loadMatchHistory,
   saveCurrentMatch,
@@ -25,6 +28,7 @@ import {
   getMatchResult,
   getOutPlayerIds,
   getOverBallNumbers,
+  getPlayerOfTheMatch,
   getTotalRuns,
   getWicketCount,
   isInningsComplete,
@@ -32,6 +36,7 @@ import {
   formatScore,
   getTeamById,
 } from '../utils/cricket'
+import { createDemoMatch } from '../utils/demoMatch'
 
 interface SetupDraft {
   title: string
@@ -53,14 +58,21 @@ interface AppStore extends MatchState {
   showScorecard: boolean
   showResumePrompt: boolean
   matchHistory: CompletedMatchSummary[]
+  selectedHistoryMatchId: string | null
 
   setScreen: (screen: Screen) => void
+  setSelectedHistoryMatchId: (id: string | null) => void
+  deleteMatchFromHistory: (id: string) => void
+  clearAllMatchHistory: () => void
+  loadDemoMatch: () => void
   setSetupStep: (step: 1 | 2 | 3) => void
   setShowScorecard: (show: boolean) => void
   initApp: () => void
   dismissResumePrompt: () => void
   resumeMatch: () => void
   resetToHome: () => void
+  discardCurrentMatch: () => void
+  hasResumableMatch: () => boolean
   updateSetupDraft: (partial: Partial<SetupDraft>) => void
   startNewMatch: () => void
   startMatch: () => void
@@ -252,10 +264,38 @@ export const useMatchStore = create<AppStore>((set, get) => ({
   showScorecard: false,
   showResumePrompt: false,
   matchHistory: [],
+  selectedHistoryMatchId: null,
 
   setScreen: (screen) => set({ screen }),
+  setSelectedHistoryMatchId: (id) => set({ selectedHistoryMatchId: id }),
   setSetupStep: (setupStep) => set({ setupStep }),
   setShowScorecard: (showScorecard) => set({ showScorecard }),
+
+  deleteMatchFromHistory: (id) => {
+    deleteFromHistory(id)
+    set((state) => ({
+      matchHistory: loadMatchHistory(),
+      selectedHistoryMatchId: state.selectedHistoryMatchId === id ? null : state.selectedHistoryMatchId,
+    }))
+  },
+
+  clearAllMatchHistory: () => {
+    clearMatchHistory()
+    set({
+      matchHistory: [],
+      selectedHistoryMatchId: null,
+    })
+  },
+
+  loadDemoMatch: () => {
+    const demo = createDemoMatch()
+    saveToHistory(demo)
+    set({
+      matchHistory: loadMatchHistory(),
+      selectedHistoryMatchId: demo.id,
+      screen: 'history',
+    })
+  },
 
   initApp: () => {
     const history = loadMatchHistory()
@@ -292,7 +332,6 @@ export const useMatchStore = create<AppStore>((set, get) => ({
   },
 
   resetToHome: () => {
-    clearCurrentMatch()
     set({
       match: null,
       innings: [],
@@ -302,16 +341,29 @@ export const useMatchStore = create<AppStore>((set, get) => ({
       setupStep: 1,
       setupDraft: defaultDraft(),
       showScorecard: false,
-      showResumePrompt: false,
+      showResumePrompt: hasResumableMatch(),
       matchHistory: loadMatchHistory(),
     })
   },
+
+  discardCurrentMatch: () => {
+    clearCurrentMatch()
+    set({
+      match: null,
+      innings: [],
+      currentInningsIndex: 0,
+      matchStatus: 'setup',
+      showResumePrompt: false,
+      showScorecard: false,
+    })
+  },
+
+  hasResumableMatch: () => hasResumableMatch(),
 
   updateSetupDraft: (partial) =>
     set((s) => ({ setupDraft: { ...s.setupDraft, ...partial } })),
 
   startNewMatch: () => {
-    clearCurrentMatch()
     set({
       screen: 'setup',
       setupStep: 1,
@@ -792,6 +844,7 @@ export const useMatchStore = create<AppStore>((set, get) => ({
     const result = getMatchResult(match, innings)
     const team1Inn = innings.find((i) => i.battingTeamId === match.team1.id)
     const team2Inn = innings.find((i) => i.battingTeamId === match.team2.id)
+    const potm = getPlayerOfTheMatch(match, innings)
 
     const summary: CompletedMatchSummary = {
       id: generateId(),
@@ -818,6 +871,9 @@ export const useMatchStore = create<AppStore>((set, get) => ({
             getWicketCount(team2Inn.balls),
           )
         : '-',
+      match: JSON.parse(JSON.stringify(match)),
+      innings: JSON.parse(JSON.stringify(innings)),
+      potm,
     }
 
     saveToHistory(summary)

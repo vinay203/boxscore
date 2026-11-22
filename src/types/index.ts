@@ -114,6 +114,13 @@ export interface CompletedMatchSummary {
   team1Score: string
   team2Name: string
   team2Score: string
+  match?: Match
+  innings?: Innings[]
+  potm?: {
+    name: string
+    stat: string
+    teamName: string
+  }
 }
 
 export type Screen = 'home' | 'history' | 'setup' | 'live' | 'summary'

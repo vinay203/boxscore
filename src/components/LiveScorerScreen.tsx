@@ -15,7 +15,7 @@ import { Input } from './ui/Input'
 import { PageTransition } from './ui/PageTransition'
 import { ScorecardScreen } from './ScorecardScreen'
 import { useMatchStore } from '../store/matchStore'
-import type { Ball, ExtraType, WicketType } from '../types'
+import type { Ball, ExtraType, Team, WicketType } from '../types'
 import {
   getBattingStats,
   getBowlingStats,
@@ -51,6 +51,90 @@ function BallDot({ ball }: { ball: Ball }) {
     <span className={`ball-dot ${runs === 4 ? 'four' : runs === 6 ? 'six' : 'runs'}`}>
       {ball.extraType === 'bye' || ball.extraType === 'legBye' ? `B${runs}` : runs}
     </span>
+  )
+}
+
+interface OpeningBatsmenSheetProps {
+  open: boolean
+  onClose: () => void
+  battingTeam: Team
+  onConfirm: (strikerId: string, nonStrikerId: string) => void
+}
+
+function OpeningBatsmenForm({
+  battingTeam,
+  onConfirm,
+}: {
+  battingTeam: Team
+  onConfirm: (strikerId: string, nonStrikerId: string) => void
+}) {
+  const [selectedStriker, setSelectedStriker] = useState(battingTeam.players[0]?.id ?? '')
+  const [selectedNonStriker, setSelectedNonStriker] = useState(battingTeam.players[1]?.id ?? '')
+
+  const handleConfirm = () => {
+    const s = selectedStriker || battingTeam.players[0]?.id || ''
+    const ns = selectedNonStriker || battingTeam.players[1]?.id || ''
+    if (!s || !ns || s === ns) return
+    onConfirm(s, ns)
+  }
+
+  return (
+    <div className="space-y-4">
+      <div>
+        <p className="text-sm font-medium mb-2" style={{ color: '#111' }}>Striker</p>
+        <div className="space-y-2 max-h-36 overflow-y-auto">
+          {battingTeam.players.map((p) => (
+            <button
+              key={p.id}
+              type="button"
+              disabled={p.id === (selectedNonStriker || battingTeam.players[1]?.id)}
+              onClick={() => setSelectedStriker(p.id)}
+              className={`sheet-option ${(selectedStriker || battingTeam.players[0]?.id) === p.id ? 'selected' : ''}`}
+            >
+              <span className="font-medium" style={{ color: '#111' }}>{p.name}</span>
+              {(selectedStriker || battingTeam.players[0]?.id) === p.id && <span style={{ fontSize: '12px', color: '#888' }}>Striker</span>}
+            </button>
+          ))}
+        </div>
+      </div>
+      <div>
+        <p className="text-sm font-medium mb-2" style={{ color: '#111' }}>Non-Striker</p>
+        <div className="space-y-2 max-h-36 overflow-y-auto">
+          {battingTeam.players.map((p) => (
+            <button
+              key={p.id}
+              type="button"
+              disabled={p.id === (selectedStriker || battingTeam.players[0]?.id)}
+              onClick={() => setSelectedNonStriker(p.id)}
+              className={`sheet-option ${(selectedNonStriker || battingTeam.players[1]?.id) === p.id ? 'selected' : ''}`}
+            >
+              <span className="font-medium" style={{ color: '#111' }}>{p.name}</span>
+              {(selectedNonStriker || battingTeam.players[1]?.id) === p.id && <span style={{ fontSize: '12px', color: '#888' }}>Non-Striker</span>}
+            </button>
+          ))}
+        </div>
+      </div>
+      <Button fullWidth onClick={handleConfirm}>
+        Confirm Opening Batsmen
+      </Button>
+    </div>
+  )
+}
+
+function OpeningBatsmenSheet({
+  open,
+  onClose,
+  battingTeam,
+  onConfirm,
+}: OpeningBatsmenSheetProps) {
+  return (
+    <BottomSheet
+      open={open}
+      onClose={onClose}
+      title="Select Opening Batsmen"
+    >
+      <OpeningBatsmenForm battingTeam={battingTeam} onConfirm={onConfirm} />
+    </BottomSheet>
   )
 }
 
@@ -127,10 +211,6 @@ export function LiveScorerScreen() {
 
   const lastBowlerId = current ? getLastBowlerId(current) : null
 
-  // Defaults for opening batsmen picker
-  const [selectedStriker, setSelectedStriker] = useState(strikerId)
-  const [selectedNonStriker, setSelectedNonStriker] = useState(nonStrikerId)
-
   const handleRun = (runs: number) => {
     if (!current?.currentBowlerId || current?.pendingBowlerSelection || current?.pendingBatsmanSelection) {
       changeBowlerRequest()
@@ -176,13 +256,6 @@ export function LiveScorerScreen() {
     vibrate()
     recordWicket(wicketType, outBatsmanId || strikerId, actualNew)
     setWicketOpen(false)
-  }
-
-  const handleConfirmOpeningBatsmen = () => {
-    const s = selectedStriker || battingTeam.players[0]?.id || ''
-    const ns = selectedNonStriker || battingTeam.players[1]?.id || ''
-    if (!s || !ns || s === ns) return
-    selectOpeningBatsmen(s, ns)
   }
 
   const openRetireModal = (isStriker: boolean) => {
@@ -377,51 +450,13 @@ export function LiveScorerScreen() {
       </PageTransition>
 
       {/* Opening batsmen selection sheet */}
-      <BottomSheet
+      <OpeningBatsmenSheet
+        key={currentInningsIndex}
         open={!!current.pendingBatsmanSelection}
         onClose={cancelBatsmanSelection}
-        title="Select Opening Batsmen"
-      >
-        <div className="space-y-4">
-          <div>
-            <p className="text-sm font-medium mb-2" style={{ color: '#111' }}>Striker</p>
-            <div className="space-y-2 max-h-36 overflow-y-auto">
-              {battingTeam.players.map((p) => (
-                <button
-                  key={p.id}
-                  type="button"
-                  disabled={p.id === (selectedNonStriker || battingTeam.players[1]?.id)}
-                  onClick={() => setSelectedStriker(p.id)}
-                  className={`sheet-option ${(selectedStriker || battingTeam.players[0]?.id) === p.id ? 'selected' : ''}`}
-                >
-                  <span className="font-medium" style={{ color: '#111' }}>{p.name}</span>
-                  {(selectedStriker || battingTeam.players[0]?.id) === p.id && <span style={{ fontSize: '12px', color: '#888' }}>Striker</span>}
-                </button>
-              ))}
-            </div>
-          </div>
-          <div>
-            <p className="text-sm font-medium mb-2" style={{ color: '#111' }}>Non-Striker</p>
-            <div className="space-y-2 max-h-36 overflow-y-auto">
-              {battingTeam.players.map((p) => (
-                <button
-                  key={p.id}
-                  type="button"
-                  disabled={p.id === (selectedStriker || battingTeam.players[0]?.id)}
-                  onClick={() => setSelectedNonStriker(p.id)}
-                  className={`sheet-option ${(selectedNonStriker || battingTeam.players[1]?.id) === p.id ? 'selected' : ''}`}
-                >
-                  <span className="font-medium" style={{ color: '#111' }}>{p.name}</span>
-                  {(selectedNonStriker || battingTeam.players[1]?.id) === p.id && <span style={{ fontSize: '12px', color: '#888' }}>Non-Striker</span>}
-                </button>
-              ))}
-            </div>
-          </div>
-          <Button fullWidth onClick={handleConfirmOpeningBatsmen}>
-            Confirm Opening Batsmen
-          </Button>
-        </div>
-      </BottomSheet>
+        battingTeam={battingTeam}
+        onConfirm={selectOpeningBatsmen}
+      />
 
       {/* Bowler selection sheet */}
       <BottomSheet

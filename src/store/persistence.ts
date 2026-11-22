@@ -2,7 +2,7 @@ import type { CompletedMatchSummary, MatchState } from '../types'
 
 export const CURRENT_MATCH_KEY = 'boxscore_current_match'
 export const MATCH_HISTORY_KEY = 'boxscore_match_history'
-export const MAX_HISTORY = 10
+export const MAX_HISTORY = 25
 
 export function saveCurrentMatch(state: MatchState): void {
   try {
@@ -30,11 +30,33 @@ export function saveToHistory(summary: CompletedMatchSummary): void {
   try {
     const raw = localStorage.getItem(MATCH_HISTORY_KEY)
     const history: CompletedMatchSummary[] = raw ? JSON.parse(raw) : []
-    history.unshift(summary)
-    if (history.length > MAX_HISTORY) {
-      history.splice(MAX_HISTORY)
+    // Remove if already exists with same id
+    const filtered = history.filter((m) => m.id !== summary.id)
+    filtered.unshift(summary)
+    if (filtered.length > MAX_HISTORY) {
+      filtered.splice(MAX_HISTORY)
     }
-    localStorage.setItem(MATCH_HISTORY_KEY, JSON.stringify(history))
+    localStorage.setItem(MATCH_HISTORY_KEY, JSON.stringify(filtered))
+  } catch {
+    // ignore
+  }
+}
+
+export function deleteFromHistory(id: string): void {
+  try {
+    const raw = localStorage.getItem(MATCH_HISTORY_KEY)
+    if (!raw) return
+    const history: CompletedMatchSummary[] = JSON.parse(raw)
+    const filtered = history.filter((m) => m.id !== id)
+    localStorage.setItem(MATCH_HISTORY_KEY, JSON.stringify(filtered))
+  } catch {
+    // ignore
+  }
+}
+
+export function clearMatchHistory(): void {
+  try {
+    localStorage.removeItem(MATCH_HISTORY_KEY)
   } catch {
     // ignore
   }

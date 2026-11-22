@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { X } from 'lucide-react'
 import { Card } from './ui/Card'
 import { useMatchStore } from '../store/matchStore'
+import type { Match, Innings } from '../types'
 import {
   getBattingStats,
   getBowlingStats,
@@ -16,10 +17,21 @@ interface ScorecardScreenProps {
   onClose?: () => void
   embedded?: boolean
   inningsIndex?: number
+  match?: Match
+  innings?: Innings[]
 }
 
-export function ScorecardScreen({ onClose, embedded, inningsIndex: propInningsIndex }: ScorecardScreenProps) {
-  const { match, innings, currentInningsIndex } = useMatchStore()
+export function ScorecardScreen({
+  onClose,
+  embedded,
+  inningsIndex: propInningsIndex,
+  match: propMatch,
+  innings: propInnings,
+}: ScorecardScreenProps) {
+  const store = useMatchStore()
+  const match = propMatch ?? store.match
+  const innings = propInnings ?? store.innings
+  const currentInningsIndex = propInnings ? 0 : store.currentInningsIndex
   const [tab, setTab] = useState<'batting' | 'bowling'>('batting')
   const [internalInningsTab, setInternalInningsTab] = useState(currentInningsIndex)
   const inningsTab = propInningsIndex ?? internalInningsTab
