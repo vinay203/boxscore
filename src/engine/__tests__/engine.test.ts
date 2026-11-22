@@ -786,4 +786,169 @@ describe('Cricket Scoring Engine (pure TypeScript)', () => {
     const resTie = getResultText('Team 1', 'Team 2', 50, 50, 5, 5, 0)
     expect(resTie).toBe('Match tied')
   })
+
+  // Test 16: Task 0a - Missing active striker/non-striker fallback and out player protection
+  it('16. Task 0a: fallback to first didNotBat player; never pick out, retiredHurt, or current crease player; never overwrite out status', () => {
+    const ctx = makeCtx({
+      battingPlayerIds: ['b1', 'b2', 'b3', 'b4'],
+      rules: { ...defaultRules, wicketsPerInnings: 3 },
+    })
+
+    // b4 is retired hurt early
+    const evRetired: InningsEvent = {
+      id: 'ret-1',
+      type: 'retiredHurt',
+      batterId: 'b4',
+    }
+
+    // Ball arrives with no openers set
+    const ev1: InningsEvent[] = [
+      evRetired,
+      {
+        id: 'ball-1',
+        type: 'ball',
+        bowlerId: 'bw1',
+        delivery: 'legal',
+        batRuns: 0,
+        byeRuns: 0,
+        legByeRuns: 0,
+        wideExtraRuns: 0,
+        wicket: { kind: 'bowled', outId: 'b1' }, // b1 gets out, no newBatterId
+      },
+    ]
+
+    const res1 = deriveInnings(ev1, ctx)
+    // Striker was b1, non-striker was b2 (fallbacks from didNotBat)
+    expect(res1.batting['b1'].status).toBe('out')
+    expect(res1.batting['b2'].status).toBe('batting')
+    expect(res1.strikerId).toBeNull() // b1 is out and no newBatterId was provided
+
+    // Ball 2 arrives without a new batter explicitly chosen
+    const ev2: InningsEvent[] = [
+      ...ev1,
+      {
+        id: 'ball-2',
+        type: 'ball',
+        bowlerId: 'bw1',
+        delivery: 'legal',
+        batRuns: 0,
+        byeRuns: 0,
+        legByeRuns: 0,
+        wideExtraRuns: 0,
+      },
+    ]
+
+    const res2 = deriveInnings(ev2, ctx)
+    // Striker should fall back to b3 (the only remaining didNotBat player, b4 is retiredHurt)
+    expect(res2.strikerId).toBe('b3')
+    expect(res2.nonStrikerId).toBe('b2')
+    expect(res2.batting['b1'].status).toBe('out') // out status preserved!
+    expect(res2.batting['b3'].status).toBe('batting')
+    expect(res2.batting['b4'].status).toBe('retiredHurt') // b4 remains retiredHurt!
+
+    // Ball 3: b3 gets out
+    const ev3: InningsEvent[] = [
+      ...ev2,
+      {
+        id: 'ball-3',
+        type: 'ball',
+        bowlerId: 'bw1',
+        delivery: 'legal',
+        batRuns: 0,
+        byeRuns: 0,
+        legByeRuns: 0,
+        wideExtraRuns: 0,
+        wicket: { kind: 'bowled', outId: 'b3' },
+      },
+    ]
+    const res3 = deriveInnings(ev3, ctx)
+    expect(res3.batting['b3'].status).toBe('out')
+    expect(res3.isComplete).toBe(false) // 2 wickets down, max is 3
+
+    // Ball 4: arrives but no didNotBat players remain (b1 out, b3 out, b4 retiredHurt, b2 at crease)
+    const ev4: InningsEvent[] = [
+      ...ev3,
+      {
+        id: 'ball-4',
+        type: 'ball',
+        bowlerId: 'bw1',
+        delivery: 'legal',
+        batRuns: 1,
+        byeRuns: 0,
+        legByeRuns: 0,
+        wideExtraRuns: 0,
+      },
+    ]
+    const res4 = deriveInnings(ev4, ctx)
+    // Slot should be left empty (null) and an error recorded
+    expect(res4.strikerId).toBe('b2') // strike rotated on 1 run from nonStriker
+    expect(res4.nonStrikerId).toBeNull() // other slot is empty
+    expect(res4.batting['b1'].status).toBe('out') // b1 still out!
+    expect(res4.batting['b3'].status).toBe('out') // b3 still out!
+    expect(res4.errors.some((e) => e.includes('no didNotBat player available'))).toBe(true)
+  })
+
+  // Test 17: Task 0b - bouncersByOver per bowler
+  it('17. Task 0b: bouncersByOver tracks bouncer counts per over index', () => {
+    const ctx = makeCtx()
+    const events: InningsEvent[] = [
+      { id: 'openers', type: 'openers', strikerId: 'b1', nonStrikerId: 'b2' },
+      // Over 0: 6 balls. Ball 1 is a bouncer, ball 2 is a bouncer.
+      { id: 'b1', type: 'ball', bowlerId: 'bw1', delivery: 'legal', batRuns: 0, byeRuns: 0, legByeRuns: 0, wideExtraRuns: 0, bouncer: true },
+      { id: 'b2', type: 'ball', bowlerId: 'bw1', delivery: 'legal', batRuns: 0, byeRuns: 0, legByeRuns: 0, wideExtraRuns: 0, bouncer: true },
+      { id: 'b3', type: 'ball', bowlerId: 'bw1', delivery: 'legal', batRuns: 0, byeRuns: 0, legByeRuns: 0, wideExtraRuns: 0 },
+      { id: 'b4', type: 'ball', bowlerId: 'bw1', delivery: 'legal', batRuns: 0, byeRuns: 0, legByeRuns: 0, wideExtraRuns: 0 },
+      { id: 'b5', type: 'ball', bowlerId: 'bw1', delivery: 'legal', batRuns: 0, byeRuns: 0, legByeRuns: 0, wideExtraRuns: 0 },
+      { id: 'b6', type: 'ball', bowlerId: 'bw1', delivery: 'legal', batRuns: 0, byeRuns: 0, legByeRuns: 0, wideExtraRuns: 0 },
+      // Over 1: Bowler bw1 bowls another over. Ball 1 is a bouncer.
+      { id: 'b7', type: 'ball', bowlerId: 'bw1', delivery: 'legal', batRuns: 0, byeRuns: 0, legByeRuns: 0, wideExtraRuns: 0, bouncer: true },
+    ]
+
+    const res = deriveInnings(events, ctx)
+    const bw1Stats = res.bowling['bw1']
+    expect(bw1Stats.bouncers).toBe(3)
+    expect(bw1Stats.bouncersByOver[0]).toBe(2)
+    expect(bw1Stats.bouncersByOver[1]).toBe(1)
+  })
+
+  // Test 18: Task 0c - DerivedBall fields and accepted wickets
+  it('18. Task 0c: DerivedBall contains extended fields and accepted wickets only', () => {
+    const ctx = makeCtx()
+    const events: InningsEvent[] = [
+      { id: 'openers', type: 'openers', strikerId: 'b1', nonStrikerId: 'b2' },
+      // Ball 1: Legal delivery with bye runs
+      { id: 'b1', type: 'ball', bowlerId: 'bw1', delivery: 'legal', batRuns: 0, byeRuns: 2, legByeRuns: 0, wideExtraRuns: 0 },
+      // Ball 2: Wide with extra runs
+      { id: 'b2', type: 'ball', bowlerId: 'bw1', delivery: 'wide', batRuns: 0, byeRuns: 0, legByeRuns: 0, wideExtraRuns: 1 },
+      // Ball 3: Caught wicket (accepted)
+      { id: 'b3', type: 'ball', bowlerId: 'bw1', delivery: 'legal', batRuns: 0, byeRuns: 0, legByeRuns: 0, wideExtraRuns: 0, wicket: { kind: 'caught', outId: 'b1', fielderId: 'bw2', newBatterId: 'b3' } },
+      // Ball 4: No ball with disallowed caught wicket (ignored)
+      { id: 'b4', type: 'ball', bowlerId: 'bw1', delivery: 'noBall', batRuns: 1, byeRuns: 0, legByeRuns: 0, wideExtraRuns: 0, wicket: { kind: 'caught', outId: 'b3' } },
+    ]
+
+    const res = deriveInnings(events, ctx)
+    expect(res.balls).toHaveLength(4)
+
+    // Ball 1 checks
+    expect(res.balls[0].delivery).toBe('legal')
+    expect(res.balls[0].byeRuns).toBe(2)
+    expect(res.balls[0].bouncer).toBe(false)
+    expect(res.balls[0].wicket).toBeUndefined()
+
+    // Ball 2 checks
+    expect(res.balls[1].delivery).toBe('wide')
+    expect(res.balls[1].wideExtraRuns).toBe(1)
+
+    // Ball 3 checks (accepted wicket)
+    expect(res.balls[2].wicket).toEqual({
+      kind: 'caught',
+      outId: 'b1',
+      fielderId: 'bw2',
+      creditedToBowler: true,
+    })
+
+    // Ball 4 checks (disallowed wicket on noBall ignored)
+    expect(res.balls[3].delivery).toBe('noBall')
+    expect(res.balls[3].wicket).toBeUndefined()
+  })
 })

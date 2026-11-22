@@ -1,3 +1,5 @@
+import type { InningsEvent } from '../engine/types'
+
 export type ExtraType = 'wide' | 'noBall' | 'bye' | 'legBye'
 
 export type WicketType =
@@ -50,6 +52,7 @@ export interface Innings {
   status: InningsStatus
   pendingBowlerSelection: boolean
   pendingBatsmanSelection?: boolean
+  events?: InningsEvent[]
 }
 
 export interface Match {

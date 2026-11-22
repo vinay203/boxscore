@@ -83,6 +83,13 @@ export interface InningsContext {
   target?: number
 }
 
+export interface DerivedWicket {
+  kind: WicketKind
+  outId: string
+  fielderId?: string
+  creditedToBowler: boolean
+}
+
 export interface DerivedBall {
   eventId: string
   over: number
@@ -95,6 +102,13 @@ export interface DerivedBall {
   isFreeHit: boolean
   ballFacedByStriker: boolean
   runsChargedToBowler: number
+  delivery: DeliveryKind
+  batRuns: number
+  byeRuns: number
+  legByeRuns: number
+  wideExtraRuns: number
+  bouncer: boolean
+  wicket?: DerivedWicket
 }
 
 export interface ExtrasBreakdown {
@@ -136,6 +150,7 @@ export interface PlayerBowlingStats {
   wides: number
   noBalls: number
   bouncers: number
+  bouncersByOver: Record<number, number>
   economy: number
 }
 

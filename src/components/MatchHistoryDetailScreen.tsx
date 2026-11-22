@@ -25,14 +25,12 @@ interface MatchHistoryDetailScreenProps {
   summary: CompletedMatchSummary
   onBack: () => void
   onDelete: (id: string) => void
-  onLoadDemo?: () => void
 }
 
 export function MatchHistoryDetailScreen({
   summary,
   onBack,
   onDelete,
-  onLoadDemo,
 }: MatchHistoryDetailScreenProps) {
   const [activeInningsTab, setActiveInningsTab] = useState<number>(0)
   const [activeViewMode, setActiveViewMode] = useState<'scorecard' | 'timeline' | 'squads'>('scorecard')
@@ -212,15 +210,6 @@ export function MatchHistoryDetailScreen({
           <p className="text-xs text-gray-500 mb-4 leading-relaxed">
             This match was recorded in an earlier version before full ball-by-ball and player scoreboards were stored. All matches scored from now on will save complete player names, batting figures, bowling figures, and ball-by-ball timelines.
           </p>
-          {onLoadDemo && (
-            <button
-              type="button"
-              onClick={onLoadDemo}
-              className="px-4 py-2 text-xs font-semibold rounded-xl bg-gray-900 text-white btn-press"
-            >
-              Preview Sample Match with Full Scorecard
-            </button>
-          )}
         </Card>
       ) : (
         <>

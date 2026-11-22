@@ -109,6 +109,13 @@ export function deriveInnings(
     return batting[id]
   }
 
+  function setBattingStatus(id: string): void {
+    const b = getOrCreateBatting(id)
+    if (b.status !== 'out' && b.status !== 'retiredHurt') {
+      b.status = 'batting'
+    }
+  }
+
   function getOrCreateBowling(id: string): PlayerBowlingStats {
     if (!bowling[id]) {
       bowling[id] = {
@@ -121,6 +128,7 @@ export function deriveInnings(
         wides: 0,
         noBalls: 0,
         bouncers: 0,
+        bouncersByOver: {},
         economy: 0,
       }
     }
@@ -203,8 +211,8 @@ export function deriveInnings(
     if (ev.type === 'openers') {
       strikerId = ev.strikerId
       nonStrikerId = ev.nonStrikerId
-      getOrCreateBatting(strikerId).status = 'batting'
-      getOrCreateBatting(nonStrikerId).status = 'batting'
+      setBattingStatus(strikerId)
+      setBattingStatus(nonStrikerId)
       needsNewBatter = false
       continue
     }
@@ -224,7 +232,7 @@ export function deriveInnings(
       if (ev.batterId === strikerId) {
         if (ev.replacementId) {
           strikerId = ev.replacementId
-          getOrCreateBatting(ev.replacementId).status = 'batting'
+          setBattingStatus(ev.replacementId)
           needsNewBatter = false
         } else {
           strikerId = null
@@ -233,7 +241,7 @@ export function deriveInnings(
       } else if (ev.batterId === nonStrikerId) {
         if (ev.replacementId) {
           nonStrikerId = ev.replacementId
-          getOrCreateBatting(ev.replacementId).status = 'batting'
+          setBattingStatus(ev.replacementId)
           needsNewBatter = false
         } else {
           nonStrikerId = null
@@ -262,7 +270,7 @@ export function deriveInnings(
       if (ev.outId === strikerId) {
         if (ev.newBatterId) {
           strikerId = ev.newBatterId
-          getOrCreateBatting(ev.newBatterId).status = 'batting'
+          setBattingStatus(ev.newBatterId)
           needsNewBatter = false
         } else {
           strikerId = null
@@ -271,7 +279,7 @@ export function deriveInnings(
       } else if (ev.outId === nonStrikerId) {
         if (ev.newBatterId) {
           nonStrikerId = ev.newBatterId
-          getOrCreateBatting(ev.newBatterId).status = 'batting'
+          setBattingStatus(ev.newBatterId)
           needsNewBatter = false
         } else {
           nonStrikerId = null
@@ -289,19 +297,48 @@ export function deriveInnings(
       needsNewBowler = false
       currentBowlerId = ev.bowlerId
 
-      // Safe fallback if openers were not set
-      if (!strikerId && ctx.battingPlayerIds[0]) {
-        strikerId = ctx.battingPlayerIds[0]
-        getOrCreateBatting(strikerId).status = 'batting'
-        errors.push(`Ball '${ev.id}' had no active striker; defaulted to '${strikerId}'`)
-      }
-      if (!nonStrikerId && ctx.battingPlayerIds[1]) {
-        nonStrikerId = ctx.battingPlayerIds[1]
-        getOrCreateBatting(nonStrikerId).status = 'batting'
+      // Safe fallback if openers or batters were not set
+      const findAvailableDidNotBatPlayer = (excludeId?: string | null): string | null => {
+        for (const pid of ctx.battingPlayerIds) {
+          if (pid === excludeId || pid === strikerId || pid === nonStrikerId) continue
+          const b = batting[pid]
+          if (!b || b.status === 'didNotBat') {
+            return pid
+          }
+        }
+        return null
       }
 
-      const currentStrikerId = strikerId ?? 'unknown_striker'
-      const currentNonStrikerId = nonStrikerId ?? 'unknown_non_striker'
+      if (!strikerId) {
+        const fallback = findAvailableDidNotBatPlayer(nonStrikerId)
+        if (fallback) {
+          strikerId = fallback
+          const b = getOrCreateBatting(fallback)
+          if (b.status !== 'out' && b.status !== 'retiredHurt') {
+            b.status = 'batting'
+          }
+          errors.push(`Ball '${ev.id}' had no active striker; defaulted to didNotBat player '${fallback}'`)
+        } else {
+          errors.push(`Ball '${ev.id}' had no active striker and no didNotBat player available`)
+        }
+      }
+
+      if (!nonStrikerId) {
+        const fallback = findAvailableDidNotBatPlayer(strikerId)
+        if (fallback) {
+          nonStrikerId = fallback
+          const b = getOrCreateBatting(fallback)
+          if (b.status !== 'out' && b.status !== 'retiredHurt') {
+            b.status = 'batting'
+          }
+          errors.push(`Ball '${ev.id}' had no active non-striker; defaulted to didNotBat player '${fallback}'`)
+        } else {
+          errors.push(`Ball '${ev.id}' had no active non-striker and no didNotBat player available`)
+        }
+      }
+
+      const currentStrikerId = strikerId ?? ''
+      const currentNonStrikerId = nonStrikerId ?? ''
 
       const isWide = ev.delivery === 'wide'
       const isNoBall = ev.delivery === 'noBall'
@@ -364,6 +401,20 @@ export function deriveInnings(
         isFreeHit: isThisBallFreeHit,
         ballFacedByStriker,
         runsChargedToBowler,
+        delivery: ev.delivery,
+        batRuns: ev.batRuns,
+        byeRuns: ev.byeRuns,
+        legByeRuns: ev.legByeRuns,
+        wideExtraRuns: ev.wideExtraRuns,
+        bouncer: !!ev.bouncer,
+        wicket: validWicket
+          ? {
+              kind: validWicket.kind,
+              outId: validWicket.outId,
+              fielderId: validWicket.fielderId,
+              creditedToBowler: BOWLER_CREDITED_WICKETS.includes(validWicket.kind),
+            }
+          : undefined,
       })
 
       // Update over deliveries tracking for maiden calculation
@@ -385,13 +436,15 @@ export function deriveInnings(
       extras.total = extras.wides + extras.noBalls + extras.byes + extras.legByes
 
       // Update striker batting stats
-      const strikerStats = getOrCreateBatting(currentStrikerId)
-      if (ballFacedByStriker) {
-        strikerStats.balls += 1
+      if (currentStrikerId) {
+        const strikerStats = getOrCreateBatting(currentStrikerId)
+        if (ballFacedByStriker) {
+          strikerStats.balls += 1
+        }
+        strikerStats.runs += ev.batRuns
+        if (ev.batRuns === 4) strikerStats.fours += 1
+        if (ev.batRuns === 6) strikerStats.sixes += 1
       }
-      strikerStats.runs += ev.batRuns
-      if (ev.batRuns === 4) strikerStats.fours += 1
-      if (ev.batRuns === 6) strikerStats.sixes += 1
 
       // Update bowler stats
       const bowlerStats = getOrCreateBowling(ev.bowlerId)
@@ -399,7 +452,11 @@ export function deriveInnings(
       bowlerStats.runs += runsChargedToBowler
       if (isWide) bowlerStats.wides += 1
       if (isNoBall) bowlerStats.noBalls += 1
-      if (ev.bouncer) bowlerStats.bouncers += 1
+      if (ev.bouncer) {
+        bowlerStats.bouncers += 1
+        bowlerStats.bouncersByOver[currentOverIndex] =
+          (bowlerStats.bouncersByOver[currentOverIndex] ?? 0) + 1
+      }
 
       // Update partnership
       currentPartnership.runs += totalBallRuns
@@ -453,7 +510,7 @@ export function deriveInnings(
         if (validWicket.outId === strikerId) {
           if (validWicket.newBatterId) {
             strikerId = validWicket.newBatterId
-            getOrCreateBatting(validWicket.newBatterId).status = 'batting'
+            setBattingStatus(validWicket.newBatterId)
             needsNewBatter = false
           } else {
             strikerId = null
@@ -462,7 +519,7 @@ export function deriveInnings(
         } else if (validWicket.outId === nonStrikerId) {
           if (validWicket.newBatterId) {
             nonStrikerId = validWicket.newBatterId
-            getOrCreateBatting(validWicket.newBatterId).status = 'batting'
+            setBattingStatus(validWicket.newBatterId)
             needsNewBatter = false
           } else {
             nonStrikerId = null

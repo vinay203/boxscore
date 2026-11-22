@@ -1,6 +1,10 @@
 import { create } from 'zustand'
+import {
+  deriveForInnings,
+  syncInnings,
+} from '../engine/adapter'
+import type { DeliveryKind, InningsEvent } from '../engine/types'
 import type {
-  Ball,
   CompletedMatchSummary,
   ExtraType,
   Innings,
@@ -22,19 +26,12 @@ import {
   saveToHistory,
 } from './persistence'
 import {
+  formatScore,
   generateId,
-  getBallRuns,
-  getLegalBallCount,
   getMatchResult,
-  getOutPlayerIds,
-  getOverBallNumbers,
   getPlayerOfTheMatch,
   getTotalRuns,
   getWicketCount,
-  isInningsComplete,
-  isSecondInningsComplete,
-  formatScore,
-  getTeamById,
 } from '../utils/cricket'
 
 interface SetupDraft {
@@ -141,114 +138,12 @@ function createInitialInnings(
     status: 'live',
     pendingBowlerSelection: true,
     pendingBatsmanSelection: true,
+    events: [],
   }
 }
 
 function persist(state: MatchState): void {
   saveCurrentMatch(state)
-}
-
-function rotateStrike(ids: [string, string]): [string, string] {
-  return [ids[1], ids[0]]
-}
-
-function checkInningsEnd(
-  innings: Innings,
-  match: Match,
-  inningsIndex: number,
-  allInnings: Innings[],
-): MatchStatus {
-  const target =
-    inningsIndex === 1 ? getTotalRuns(allInnings[0].balls) + 1 : null
-
-  const done =
-    inningsIndex === 1 && target !== null
-      ? isSecondInningsComplete(innings, match, target)
-      : isInningsComplete(innings, match)
-
-  if (!done) return 'live'
-  return inningsIndex === 0 ? 'innings_break' : 'complete'
-}
-
-function applyDelivery(
-  current: Innings,
-  ball: Ball,
-  match: Match,
-  inningsIndex: number,
-  allInnings: Innings[],
-): { innings: Innings; matchStatus: MatchStatus } {
-  const newBalls = [...current.balls, ball]
-  let batsmanIds: [string, string] = [...current.currentBatsmanIds]
-  let pendingBowler = current.pendingBowlerSelection
-
-  const runs = getBallRuns(ball)
-  const legalAfter = getLegalBallCount(newBalls)
-
-  let bowlerId = current.currentBowlerId
-
-  if (ball.isLegalDelivery && runs % 2 === 1) {
-    batsmanIds = rotateStrike(batsmanIds)
-  }
-
-  if (ball.isLegalDelivery && legalAfter > 0 && legalAfter % 6 === 0) {
-    batsmanIds = rotateStrike(batsmanIds)
-    pendingBowler = true
-    bowlerId = ''
-  }
-
-  const innings: Innings = {
-    ...current,
-    balls: newBalls,
-    currentBatsmanIds: batsmanIds,
-    currentBowlerId: bowlerId,
-    pendingBowlerSelection: pendingBowler,
-    status: 'live',
-  }
-
-  const matchStatus = checkInningsEnd(innings, match, inningsIndex, allInnings)
-  if (matchStatus !== 'live') {
-    innings.status = 'complete'
-  }
-
-  return { innings, matchStatus }
-}
-
-function rebuildBatsmenFromBalls(
-  balls: Ball[],
-  match: Match,
-  battingTeamId: string,
-): [string, string] {
-  const team = battingTeamId === match.team1.id ? match.team1 : match.team2
-  let ids: [string, string] = [
-    team.players[0]?.id || '',
-    team.players[1]?.id || '',
-  ]
-  let legalCount = 0
-
-  for (let i = 0; i < balls.length; i++) {
-    const b = balls[i]
-    const runs = getBallRuns(b)
-
-    if (b.isLegalDelivery) {
-      legalCount++
-      if (runs % 2 === 1) ids = rotateStrike(ids)
-      if (legalCount % 6 === 0) ids = rotateStrike(ids)
-    }
-
-    if (b.isWicket && b.outBatsmanId) {
-      const outSoFar = getOutPlayerIds(balls.slice(0, i + 1))
-      const available = team.players.filter(
-        (p) => !outSoFar.has(p.id) && p.id !== ids[0] && p.id !== ids[1],
-      )
-      if (b.outBatsmanId === ids[0] && available[0]) {
-        ids = [available[0].id, ids[1]]
-      } else if (b.outBatsmanId === ids[1] && available[0]) {
-        ids = [ids[0], available[0].id]
-      }
-    }
-  }
-
-  return ids
 }
 
 export const useMatchStore = create<AppStore>((set, get) => ({
@@ -266,71 +161,55 @@ export const useMatchStore = create<AppStore>((set, get) => ({
 
   setScreen: (screen) => set({ screen }),
   setSelectedHistoryMatchId: (id) => set({ selectedHistoryMatchId: id }),
-  setSetupStep: (setupStep) => set({ setupStep }),
-  setShowScorecard: (showScorecard) => set({ showScorecard }),
 
   deleteMatchFromHistory: (id) => {
     deleteFromHistory(id)
-    set((state) => ({
-      matchHistory: loadMatchHistory(),
-      selectedHistoryMatchId: state.selectedHistoryMatchId === id ? null : state.selectedHistoryMatchId,
-    }))
+    set({ matchHistory: loadMatchHistory() })
   },
 
   clearAllMatchHistory: () => {
     clearMatchHistory()
-    set({
-      matchHistory: [],
-      selectedHistoryMatchId: null,
-    })
+    set({ matchHistory: [] })
   },
+
+  setSetupStep: (step) => set({ setupStep: step }),
+  setShowScorecard: (show) => set({ showScorecard: show }),
 
   initApp: () => {
     const history = loadMatchHistory()
-    const saved = loadCurrentMatch()
-    set({
-      matchHistory: history,
-      showResumePrompt:
-        !!saved &&
-        !!saved.match &&
-        saved.matchStatus !== 'complete' &&
-        saved.matchStatus !== 'setup',
-    })
+    const current = loadCurrentMatch()
+    const canResume = hasResumableMatch()
+
+    if (current && canResume) {
+      set({
+        match: current.match,
+        innings: current.innings,
+        currentInningsIndex: current.currentInningsIndex,
+        matchStatus: current.matchStatus,
+        showResumePrompt: true,
+        matchHistory: history,
+      })
+    } else {
+      set({ matchHistory: history })
+    }
   },
 
   dismissResumePrompt: () => set({ showResumePrompt: false }),
 
   resumeMatch: () => {
-    const saved = loadCurrentMatch()
-    if (!saved?.match) return
-
-    let screen: Screen = 'live'
-    if (saved.matchStatus === 'complete') screen = 'summary'
-    else if (saved.matchStatus === 'innings_break') screen = 'live'
-
-    set({
-      ...saved,
-      screen,
-      showResumePrompt: false,
-      setupDraft: defaultDraft(),
-      setupStep: 1,
-      showScorecard: false,
-      matchHistory: loadMatchHistory(),
-    })
+    const state = get()
+    if (state.match) {
+      set({ screen: 'live', showResumePrompt: false })
+    }
   },
 
   resetToHome: () => {
     set({
-      match: null,
-      innings: [],
-      currentInningsIndex: 0,
-      matchStatus: 'setup',
       screen: 'home',
       setupStep: 1,
       setupDraft: defaultDraft(),
       showScorecard: false,
       showResumePrompt: hasResumableMatch(),
-      matchHistory: loadMatchHistory(),
     })
   },
 
@@ -342,31 +221,47 @@ export const useMatchStore = create<AppStore>((set, get) => ({
       currentInningsIndex: 0,
       matchStatus: 'setup',
       showResumePrompt: false,
+      screen: 'home',
+      setupStep: 1,
+      setupDraft: defaultDraft(),
       showScorecard: false,
     })
   },
 
   hasResumableMatch: () => hasResumableMatch(),
 
-  updateSetupDraft: (partial) =>
-    set((s) => ({ setupDraft: { ...s.setupDraft, ...partial } })),
+  updateSetupDraft: (partial) => {
+    set((state) => {
+      const next = { ...state.setupDraft, ...partial }
+      const diff = next.playersPerTeam - state.setupDraft.playersPerTeam
+      if (diff !== 0) {
+        const resize = (arr: string[]) => {
+          if (arr.length < next.playersPerTeam) {
+            return [
+              ...arr,
+              ...Array(next.playersPerTeam - arr.length).fill(''),
+            ]
+          }
+          return arr.slice(0, next.playersPerTeam)
+        }
+        next.team1Players = resize(next.team1Players)
+        next.team2Players = resize(next.team2Players)
+      }
+      return { setupDraft: next }
+    })
+  },
 
   startNewMatch: () => {
     set({
-      screen: 'setup',
-      setupStep: 1,
       setupDraft: defaultDraft(),
-      match: null,
-      innings: [],
-      currentInningsIndex: 0,
-      matchStatus: 'setup',
-      showScorecard: false,
+      setupStep: 1,
+      screen: 'setup',
+      showResumePrompt: false,
     })
   },
 
   startMatch: () => {
     const { setupDraft } = get()
-    if (!setupDraft.tossWinnerTeam) return
 
     const team1 = createTeam(setupDraft.team1Name, setupDraft.team1Players)
     const team2 = createTeam(setupDraft.team2Name, setupDraft.team2Players)
@@ -392,15 +287,17 @@ export const useMatchStore = create<AppStore>((set, get) => ({
     const bowlingTeam =
       battingFirstId === team1.id ? team2 : team1
 
-    const innings = createInitialInnings(
+    const initialInnings = createInitialInnings(
       battingTeam.id,
       bowlingTeam.id,
       battingTeam,
     )
 
+    const syncedInnings = syncInnings(initialInnings, match, [initialInnings], 0)
+
     const newState: MatchState = {
       match,
-      innings: [innings],
+      innings: [syncedInnings],
       currentInningsIndex: 0,
       matchStatus: 'live',
     }
@@ -423,43 +320,53 @@ export const useMatchStore = create<AppStore>((set, get) => ({
       return
     if (current.status === 'complete') return
 
-    const { over, ball } = getOverBallNumbers(current.balls)
-    const ballRecord: Ball = {
-      over,
-      ball,
-      batsmanId: current.currentBatsmanIds[0],
+    const ballEvent: InningsEvent = {
+      id: generateId(),
+      type: 'ball',
       bowlerId: current.currentBowlerId,
-      runs,
-      isWicket: false,
-      isLegalDelivery: true,
+      delivery: 'legal',
+      batRuns: runs,
+      byeRuns: 0,
+      legByeRuns: 0,
+      wideExtraRuns: 0,
     }
 
-    const result = applyDelivery(
-      current,
-      ballRecord,
-      match,
-      currentInningsIndex,
-      innings,
-    )
+    const updatedCurrent: Innings = {
+      ...current,
+      events: [...(current.events ?? []), ballEvent],
+    }
 
+    const synced = syncInnings(
+      updatedCurrent,
+      match,
+      innings,
+      currentInningsIndex,
+    )
     const newInnings = [...innings]
-    newInnings[currentInningsIndex] = result.innings
+    newInnings[currentInningsIndex] = synced
+
+    const derived = deriveForInnings(match, newInnings, currentInningsIndex)
+    const matchStatus: MatchStatus = derived.isComplete
+      ? currentInningsIndex === 0
+        ? 'innings_break'
+        : 'complete'
+      : 'live'
 
     const newState: MatchState = {
       match,
       innings: newInnings,
       currentInningsIndex,
-      matchStatus: result.matchStatus,
+      matchStatus,
     }
 
     persist(newState)
     set(newState)
-    if (result.matchStatus === 'complete') {
+    if (matchStatus === 'complete') {
       get().finishMatch()
     }
   },
 
-  recordExtra: (type, runs = 1) => {
+  recordExtra: (type, runs = 0) => {
     const state = get()
     const { match, innings, currentInningsIndex } = state
     if (!match || state.matchStatus !== 'live') return
@@ -473,41 +380,69 @@ export const useMatchStore = create<AppStore>((set, get) => ({
       return
     if (current.status === 'complete') return
 
-    const isLegal = type === 'bye' || type === 'legBye'
-    const { over, ball } = getOverBallNumbers(current.balls)
+    const effectiveRuns = runs ?? 0
+    let delivery: DeliveryKind = 'legal'
+    let batRuns = 0
+    let byeRuns = 0
+    let legByeRuns = 0
+    let wideExtraRuns = 0
 
-    const ballRecord: Ball = {
-      over,
-      ball,
-      batsmanId: current.currentBatsmanIds[0],
-      bowlerId: current.currentBowlerId,
-      runs: isLegal ? runs : 0,
-      extraType: type,
-      isWicket: false,
-      isLegalDelivery: isLegal,
+    if (type === 'wide') {
+      delivery = 'wide'
+      wideExtraRuns = effectiveRuns
+    } else if (type === 'noBall') {
+      delivery = 'noBall'
+      batRuns = effectiveRuns
+    } else if (type === 'bye') {
+      delivery = 'legal'
+      byeRuns = effectiveRuns
+    } else if (type === 'legBye') {
+      delivery = 'legal'
+      legByeRuns = effectiveRuns
     }
 
-    const result = applyDelivery(
-      current,
-      ballRecord,
-      match,
-      currentInningsIndex,
-      innings,
-    )
+    const ballEvent: InningsEvent = {
+      id: generateId(),
+      type: 'ball',
+      bowlerId: current.currentBowlerId,
+      delivery,
+      batRuns,
+      byeRuns,
+      legByeRuns,
+      wideExtraRuns,
+    }
 
+    const updatedCurrent: Innings = {
+      ...current,
+      events: [...(current.events ?? []), ballEvent],
+    }
+
+    const synced = syncInnings(
+      updatedCurrent,
+      match,
+      innings,
+      currentInningsIndex,
+    )
     const newInnings = [...innings]
-    newInnings[currentInningsIndex] = result.innings
+    newInnings[currentInningsIndex] = synced
+
+    const derived = deriveForInnings(match, newInnings, currentInningsIndex)
+    const matchStatus: MatchStatus = derived.isComplete
+      ? currentInningsIndex === 0
+        ? 'innings_break'
+        : 'complete'
+      : 'live'
 
     const newState: MatchState = {
       match,
       innings: newInnings,
       currentInningsIndex,
-      matchStatus: result.matchStatus,
+      matchStatus,
     }
 
     persist(newState)
     set(newState)
-    if (result.matchStatus === 'complete') {
+    if (matchStatus === 'complete') {
       get().finishMatch()
     }
   },
@@ -526,64 +461,53 @@ export const useMatchStore = create<AppStore>((set, get) => ({
       return
     if (current.status === 'complete') return
 
-    const { over, ball } = getOverBallNumbers(current.balls)
-    const strikerWasOut = outBatsmanId === current.currentBatsmanIds[0]
-
-    const ballRecord: Ball = {
-      over,
-      ball,
-      batsmanId: current.currentBatsmanIds[0],
+    const ballEvent: InningsEvent = {
+      id: generateId(),
+      type: 'ball',
       bowlerId: current.currentBowlerId,
-      runs: 0,
-      isWicket: true,
-      wicketType,
-      outBatsmanId,
-      isLegalDelivery: true,
+      delivery: 'legal',
+      batRuns: 0,
+      byeRuns: 0,
+      legByeRuns: 0,
+      wideExtraRuns: 0,
+      wicket: {
+        kind: wicketType,
+        outId: outBatsmanId,
+        newBatterId: newBatsmanId || undefined,
+      },
     }
 
-    const wicketsAfter = getWicketCount([...current.balls, ballRecord])
-    const allOut = wicketsAfter >= match.wicketLimit
-
-    let batsmanIds: [string, string] = [...current.currentBatsmanIds]
-
-    if (!allOut) {
-      const battingTeam = getTeamById(match, current.battingTeamId)
-      const outSoFar = getOutPlayerIds([...current.balls, ballRecord])
-      const available = battingTeam.players.filter(
-        (p) => !outSoFar.has(p.id) && !current.currentBatsmanIds.includes(p.id),
-      )
-      const actualNewId =
-        newBatsmanId || available[0]?.id || current.currentBatsmanIds[0]
-
-      if (strikerWasOut) {
-        batsmanIds = [actualNewId, current.currentBatsmanIds[1]]
-      } else {
-        batsmanIds = [current.currentBatsmanIds[0], actualNewId]
-      }
+    const updatedCurrent: Innings = {
+      ...current,
+      events: [...(current.events ?? []), ballEvent],
     }
 
-    const interim: Innings = { ...current, currentBatsmanIds: batsmanIds }
-    const result = applyDelivery(
-      interim,
-      ballRecord,
+    const synced = syncInnings(
+      updatedCurrent,
       match,
-      currentInningsIndex,
       innings,
+      currentInningsIndex,
     )
-
     const newInnings = [...innings]
-    newInnings[currentInningsIndex] = result.innings
+    newInnings[currentInningsIndex] = synced
+
+    const derived = deriveForInnings(match, newInnings, currentInningsIndex)
+    const matchStatus: MatchStatus = derived.isComplete
+      ? currentInningsIndex === 0
+        ? 'innings_break'
+        : 'complete'
+      : 'live'
 
     const newState: MatchState = {
       match,
       innings: newInnings,
       currentInningsIndex,
-      matchStatus: result.matchStatus,
+      matchStatus,
     }
 
     persist(newState)
     set(newState)
-    if (result.matchStatus === 'complete') {
+    if (matchStatus === 'complete') {
       get().finishMatch()
     }
   },
@@ -642,24 +566,56 @@ export const useMatchStore = create<AppStore>((set, get) => ({
     if (!match) return
 
     const current = innings[currentInningsIndex]
-    const updated: Innings = {
-      ...current,
-      currentBatsmanIds: [strikerId, nonStrikerId],
-      pendingBatsmanSelection: false,
+    const events = [...(current.events ?? [])]
+    const hasBalls = events.some((e) => e.type === 'ball')
+    const openersIdx = events.findIndex((e) => e.type === 'openers')
+
+    const openerEvent: InningsEvent = {
+      id: generateId(),
+      type: 'openers',
+      strikerId,
+      nonStrikerId,
     }
 
+    if (!hasBalls && openersIdx >= 0) {
+      events[openersIdx] = openerEvent
+    } else {
+      events.push(openerEvent)
+    }
+
+    const updatedInnings: Innings = {
+      ...current,
+      events,
+    }
+
+    const synced = syncInnings(
+      updatedInnings,
+      match,
+      innings,
+      currentInningsIndex,
+    )
     const newInnings = [...innings]
-    newInnings[currentInningsIndex] = updated
+    newInnings[currentInningsIndex] = synced
+
+    const derived = deriveForInnings(match, newInnings, currentInningsIndex)
+    const matchStatus: MatchStatus = derived.isComplete
+      ? currentInningsIndex === 0
+        ? 'innings_break'
+        : 'complete'
+      : state.matchStatus
 
     const newState: MatchState = {
       match,
       innings: newInnings,
       currentInningsIndex,
-      matchStatus: state.matchStatus,
+      matchStatus,
     }
 
     persist(newState)
     set(newState)
+    if (matchStatus === 'complete') {
+      get().finishMatch()
+    }
   },
 
   cancelBatsmanSelection: () => {
@@ -690,27 +646,50 @@ export const useMatchStore = create<AppStore>((set, get) => ({
     if (!match || state.matchStatus !== 'live') return
 
     const current = innings[currentInningsIndex]
-    const updatedIds: [string, string] = isStriker
-      ? [newBatsmanId, current.currentBatsmanIds[1]]
-      : [current.currentBatsmanIds[0], newBatsmanId]
+    const batterId = isStriker
+      ? current.currentBatsmanIds[0]
+      : current.currentBatsmanIds[1]
 
-    const updated: Innings = {
-      ...current,
-      currentBatsmanIds: updatedIds,
+    const retireEvent: InningsEvent = {
+      id: generateId(),
+      type: 'retiredHurt',
+      batterId,
+      replacementId: newBatsmanId || undefined,
     }
 
+    const updatedCurrent: Innings = {
+      ...current,
+      events: [...(current.events ?? []), retireEvent],
+    }
+
+    const synced = syncInnings(
+      updatedCurrent,
+      match,
+      innings,
+      currentInningsIndex,
+    )
     const newInnings = [...innings]
-    newInnings[currentInningsIndex] = updated
+    newInnings[currentInningsIndex] = synced
+
+    const derived = deriveForInnings(match, newInnings, currentInningsIndex)
+    const matchStatus: MatchStatus = derived.isComplete
+      ? currentInningsIndex === 0
+        ? 'innings_break'
+        : 'complete'
+      : state.matchStatus
 
     const newState: MatchState = {
       match,
       innings: newInnings,
       currentInningsIndex,
-      matchStatus: state.matchStatus,
+      matchStatus,
     }
 
     persist(newState)
     set(newState)
+    if (matchStatus === 'complete') {
+      get().finishMatch()
+    }
   },
 
   updateLiveMatchNames: (t1Name, t1Players, t2Name, t2Players) => {
@@ -759,30 +738,51 @@ export const useMatchStore = create<AppStore>((set, get) => ({
     if (!match) return
 
     const current = innings[currentInningsIndex]
-    if (current.balls.length === 0) return
+    const events = current.events ?? []
 
-    const newBalls = current.balls.slice(0, -1)
-    const legal = getLegalBallCount(newBalls)
-    const pendingBowler = legal > 0 && legal % 6 === 0
-
-    const restored: Innings = {
-      ...current,
-      balls: newBalls,
-      status: 'live',
-      currentBatsmanIds: rebuildBatsmenFromBalls(
-        newBalls,
-        match,
-        current.battingTeamId,
-      ),
-      currentBowlerId:
-        newBalls.length > 0
-          ? newBalls.filter((b) => b.isLegalDelivery).at(-1)?.bowlerId ??
-            newBalls[newBalls.length - 1].bowlerId
-          : '',
-      pendingBowlerSelection: pendingBowler || newBalls.length === 0,
+    let lastIndex = -1
+    for (let i = events.length - 1; i >= 0; i--) {
+      if (events[i].type !== 'openers') {
+        lastIndex = i
+        break
+      }
+    }
+    if (lastIndex === -1) {
+      return
     }
 
+    const newEvents = [
+      ...events.slice(0, lastIndex),
+      ...events.slice(lastIndex + 1),
+    ]
+
+    const interim: Innings = {
+      ...current,
+      events: newEvents,
+      status: 'live',
+    }
+
+    const synced = syncInnings(interim, match, innings, currentInningsIndex)
     const newInnings = [...innings]
+    newInnings[currentInningsIndex] = synced
+
+    const derived = deriveForInnings(match, newInnings, currentInningsIndex)
+
+    const remainingBalls = newEvents.filter(
+      (e): e is Extract<InningsEvent, { type: 'ball' }> => e.type === 'ball',
+    )
+    const lastBall = remainingBalls.at(-1)
+    const currentBowlerId = lastBall ? lastBall.bowlerId : ''
+    const pendingBowlerSelection =
+      derived.needsNewBowler || synced.balls.length === 0
+
+    const restored: Innings = {
+      ...synced,
+      currentBowlerId,
+      pendingBowlerSelection,
+      status: 'live',
+    }
+
     newInnings[currentInningsIndex] = restored
 
     const newState: MatchState = {
@@ -812,10 +812,18 @@ export const useMatchStore = create<AppStore>((set, get) => ({
       bowlingTeamId,
       battingTeam,
     )
+    secondInnings.events = []
+
+    const synced = syncInnings(
+      secondInnings,
+      match,
+      [...innings, secondInnings],
+      1,
+    )
 
     const newState: MatchState = {
       match,
-      innings: [...innings, secondInnings],
+      innings: [...innings, synced],
       currentInningsIndex: 1,
       matchStatus: 'live',
     }
@@ -880,26 +888,44 @@ export const useMatchStore = create<AppStore>((set, get) => ({
     if (!match || state.matchStatus !== 'live') return
 
     const current = innings[currentInningsIndex]
-    const swapped: Innings = {
-      ...current,
-      currentBatsmanIds: [
-        current.currentBatsmanIds[1],
-        current.currentBatsmanIds[0],
-      ],
+    const swapEvent: InningsEvent = {
+      id: generateId(),
+      type: 'swapEnds',
     }
 
+    const updatedCurrent: Innings = {
+      ...current,
+      events: [...(current.events ?? []), swapEvent],
+    }
+
+    const synced = syncInnings(
+      updatedCurrent,
+      match,
+      innings,
+      currentInningsIndex,
+    )
     const newInnings = [...innings]
-    newInnings[currentInningsIndex] = swapped
+    newInnings[currentInningsIndex] = synced
+
+    const derived = deriveForInnings(match, newInnings, currentInningsIndex)
+    const matchStatus: MatchStatus = derived.isComplete
+      ? currentInningsIndex === 0
+        ? 'innings_break'
+        : 'complete'
+      : state.matchStatus
 
     const newState: MatchState = {
       match,
       innings: newInnings,
       currentInningsIndex,
-      matchStatus: state.matchStatus,
+      matchStatus,
     }
 
     persist(newState)
     set(newState)
+    if (matchStatus === 'complete') {
+      get().finishMatch()
+    }
   },
 
   endInningsEarly: () => {
@@ -908,32 +934,38 @@ export const useMatchStore = create<AppStore>((set, get) => ({
     if (!match || state.matchStatus !== 'live') return
 
     const current = innings[currentInningsIndex]
-    const ended: Innings = {
-      ...current,
-      status: 'complete',
+    const endEvent: InningsEvent = {
+      id: generateId(),
+      type: 'endInnings',
     }
 
-    const newInnings = [...innings]
-    newInnings[currentInningsIndex] = ended
+    const updatedCurrent: Innings = {
+      ...current,
+      events: [...(current.events ?? []), endEvent],
+    }
 
-    if (currentInningsIndex === 0) {
-      const newState: MatchState = {
-        match,
-        innings: newInnings,
-        currentInningsIndex,
-        matchStatus: 'innings_break',
-      }
-      persist(newState)
-      set(newState)
-    } else {
-      const newState: MatchState = {
-        match,
-        innings: newInnings,
-        currentInningsIndex,
-        matchStatus: 'complete',
-      }
-      persist(newState)
-      set(newState)
+    const synced = syncInnings(
+      updatedCurrent,
+      match,
+      innings,
+      currentInningsIndex,
+    )
+    const newInnings = [...innings]
+    newInnings[currentInningsIndex] = synced
+
+    const matchStatus: MatchStatus =
+      currentInningsIndex === 0 ? 'innings_break' : 'complete'
+
+    const newState: MatchState = {
+      match,
+      innings: newInnings,
+      currentInningsIndex,
+      matchStatus,
+    }
+
+    persist(newState)
+    set(newState)
+    if (matchStatus === 'complete') {
       get().finishMatch()
     }
   },
