@@ -36,7 +36,6 @@ import {
   formatScore,
   getTeamById,
 } from '../utils/cricket'
-import { createDemoMatch } from '../utils/demoMatch'
 
 interface SetupDraft {
   title: string
@@ -64,7 +63,6 @@ interface AppStore extends MatchState {
   setSelectedHistoryMatchId: (id: string | null) => void
   deleteMatchFromHistory: (id: string) => void
   clearAllMatchHistory: () => void
-  loadDemoMatch: () => void
   setSetupStep: (step: 1 | 2 | 3) => void
   setShowScorecard: (show: boolean) => void
   initApp: () => void
@@ -284,16 +282,6 @@ export const useMatchStore = create<AppStore>((set, get) => ({
     set({
       matchHistory: [],
       selectedHistoryMatchId: null,
-    })
-  },
-
-  loadDemoMatch: () => {
-    const demo = createDemoMatch()
-    saveToHistory(demo)
-    set({
-      matchHistory: loadMatchHistory(),
-      selectedHistoryMatchId: demo.id,
-      screen: 'history',
     })
   },
 

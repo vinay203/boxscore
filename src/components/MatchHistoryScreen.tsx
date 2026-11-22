@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { ArrowLeft, ChevronRight, Sparkles, Trash2 } from 'lucide-react'
+import { ArrowLeft, ChevronRight, Trash2 } from 'lucide-react'
 import { PageTransition } from './ui/PageTransition'
 import { Card } from './ui/Card'
 import { useMatchStore } from '../store/matchStore'
@@ -13,7 +13,6 @@ export function MatchHistoryScreen() {
     setSelectedHistoryMatchId,
     deleteMatchFromHistory,
     clearAllMatchHistory,
-    loadDemoMatch,
   } = useMatchStore()
 
   const [showClearConfirm, setShowClearConfirm] = useState(false)
@@ -26,7 +25,6 @@ export function MatchHistoryScreen() {
         summary={selectedMatch}
         onBack={() => setSelectedHistoryMatchId(null)}
         onDelete={deleteMatchFromHistory}
-        onLoadDemo={loadDemoMatch}
       />
     )
   }
@@ -68,17 +66,6 @@ export function MatchHistoryScreen() {
             {matchHistory.length} completed match{matchHistory.length !== 1 ? 'es' : ''}
           </p>
         </div>
-
-        {/* Option to load a realistic sample match if desired */}
-        <button
-          type="button"
-          onClick={loadDemoMatch}
-          className="inline-flex items-center gap-1 text-[11px] font-semibold text-gray-700 bg-gray-100 hover:bg-gray-200 px-2.5 py-1.5 rounded-lg transition-colors btn-press"
-          title="Load a demo match with complete player scorecards and timeline"
-        >
-          <Sparkles size={12} className="text-amber-500" />
-          <span>Demo Match</span>
-        </button>
       </div>
 
       {/* Clear All Confirmation prompt */}
@@ -114,17 +101,9 @@ export function MatchHistoryScreen() {
             🏏
           </div>
           <p className="text-sm font-semibold text-gray-800 mb-1">No completed matches yet</p>
-          <p className="text-xs text-gray-400 max-w-xs mx-auto mb-4">
+          <p className="text-xs text-gray-400 max-w-xs mx-auto">
             Finish a match to see its full scoreboard, player names, and ball-by-ball history here.
           </p>
-          <button
-            type="button"
-            onClick={loadDemoMatch}
-            className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold rounded-xl bg-gray-900 text-white btn-press shadow-sm"
-          >
-            <Sparkles size={13} className="text-amber-400" />
-            Load Sample Match with Full Scorecard
-          </button>
         </Card>
       ) : (
         <div className="space-y-3">

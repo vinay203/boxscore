@@ -35,8 +35,9 @@ overs, wicketsPerInnings, playersPerTeam, freeHitAfterNoBall, freeHitAfterWide (
 - Undo/redo/edit = changing the log, then recomputing
 
 ## Build steps (do only the step you are asked to)
-[ ] 1  Safety fixes: hooks crash, stale opener picker, never delete a match by accident, viewport zoom
-[ ] 2  Ball-event foundation + rules config. Derive score/strike/stats from the ball log.
+[x] 1  Safety fixes: hooks crash, stale opener picker, never delete a match by accident, viewport zoom
+[ ] 2a engine (pure code + tests)
+[ ] 2b move the app onto the engine
        Fixes: undo restoring wrong batsmen, byes charged to bowler, dismissal text ("c ? b"),
        result text when Team 2 bats first, "1 wickets" grammar, "did not bat" bug, not-out/retired labels
 [ ] 3  Extras and dismissals: no-ball/wide with runs as ONE delivery, free hit, wicket on wide/no-ball,
