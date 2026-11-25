@@ -15,20 +15,19 @@ import { Input } from './ui/Input'
 import { PageTransition } from './ui/PageTransition'
 import { ScorecardScreen } from './ScorecardScreen'
 import { useMatchStore } from '../store/matchStore'
-import type { Ball, ExtraType, Team, WicketType } from '../types'
 import {
-  getBattingStats,
-  getBowlingStats,
+  deriveForInnings,
   getCurrentOverBalls,
+  getInningsSummary,
   getLastBowlerId,
-  getOversDisplay,
+  getRequiredInfo,
+  type DerivedBall,
+} from '../engine'
+import type { ExtraType, Team, WicketType } from '../types'
+import {
   getPlayerById,
   getPlayerName,
-  getRemainingBatsmen,
-  getRequiredRunsInfo,
   getTeamById,
-  getTotalRuns,
-  getWicketCount,
   vibrate,
 } from '../utils/cricket'
 
@@ -41,15 +40,17 @@ const DISMISSAL_TYPES: { type: WicketType; label: string }[] = [
   { type: 'hitWicket', label: 'Hit Wicket' },
 ]
 
-function BallDot({ ball }: { ball: Ball }) {
-  if (ball.isWicket) return <span className="ball-dot wicket">W</span>
-  if (ball.extraType === 'wide') return <span className="ball-dot wide">Wd</span>
-  if (ball.extraType === 'noBall') return <span className="ball-dot noball">Nb</span>
-  const runs = ball.runs
+function BallDot({ ball }: { ball: DerivedBall }) {
+  if (ball.wicket) return <span className="ball-dot wicket">W</span>
+  if (ball.delivery === 'wide') return <span className="ball-dot wide">Wd</span>
+  if (ball.delivery === 'noBall') return <span className="ball-dot noball">Nb</span>
+  const runs = ball.batRuns + ball.byeRuns + ball.legByeRuns
   if (runs === 0) return <span className="ball-dot dot">·</span>
   return (
-    <span className={`ball-dot ${runs === 4 ? 'four' : runs === 6 ? 'six' : 'runs'}`}>
-      {ball.extraType === 'bye' || ball.extraType === 'legBye' ? `B${runs}` : runs}
+    <span
+      className={`ball-dot ${runs === 4 ? 'four' : runs === 6 ? 'six' : 'runs'}`}
+    >
+      {ball.byeRuns > 0 || ball.legByeRuns > 0 ? `B${runs}` : runs}
     </span>
   )
 }
@@ -190,26 +191,46 @@ export function LiveScorerScreen() {
   const battingTeam = getTeamById(match, current?.battingTeamId ?? match.battingFirstId)
   const bowlingTeam = getTeamById(match, current?.bowlingTeamId ?? '')
 
-  const totalRuns = current ? getTotalRuns(current.balls) : 0
-  const wickets = current ? getWicketCount(current.balls) : 0
-  const oversDisplay = current ? getOversDisplay(current.balls, match.overs) : ''
-  const overBalls = current ? getCurrentOverBalls(current.balls) : []
-  const required = getRequiredRunsInfo(innings, currentInningsIndex, match.overs)
+  const derived = current
+    ? deriveForInnings(match, innings, currentInningsIndex)
+    : null
+  const summary = current
+    ? getInningsSummary(match, innings, currentInningsIndex)
+    : null
+
+  const totalRuns = summary ? summary.runs : 0
+  const wickets = summary ? summary.wickets : 0
+  const oversDisplay = summary
+    ? `(${summary.oversDisplay} / ${match.overs} ov)`
+    : ''
+  const overBalls = derived ? getCurrentOverBalls(derived.balls) : []
+  const required = getRequiredInfo(match, innings)
 
   const strikerId = current?.currentBatsmanIds[0] ?? battingTeam.players[0]?.id ?? ''
   const nonStrikerId = current?.currentBatsmanIds[1] ?? battingTeam.players[1]?.id ?? ''
 
-  const strikerStats = getBattingStats(current?.balls ?? [], strikerId, battingTeam.players)
-  const nonStrikerStats = getBattingStats(current?.balls ?? [], nonStrikerId, battingTeam.players)
-  const bowlerStats = current?.currentBowlerId
-    ? getBowlingStats(current.balls, current.currentBowlerId)
-    : null
+  const strikerStats = summary?.batting.find((b) => b.id === strikerId) ?? {
+    runs: 0,
+    ballsFaced: 0,
+    fours: 0,
+    sixes: 0,
+    strikeRate: 0,
+  }
+  const nonStrikerStats = summary?.batting.find((b) => b.id === nonStrikerId) ?? {
+    runs: 0,
+    ballsFaced: 0,
+    fours: 0,
+    sixes: 0,
+    strikeRate: 0,
+  }
+  const bowlerStats =
+    current?.currentBowlerId && derived
+      ? derived.bowling[current.currentBowlerId]
+      : null
 
-  const remainingBatsmen = current
-    ? getRemainingBatsmen(battingTeam, current.balls, current.currentBatsmanIds)
-    : []
+  const remainingBatsmen = summary ? summary.remainingBatsmen : []
 
-  const lastBowlerId = current ? getLastBowlerId(current) : null
+  const lastBowlerId = derived ? getLastBowlerId(derived.balls) : null
 
   const handleRun = (runs: number) => {
     if (!current?.currentBowlerId || current?.pendingBowlerSelection || current?.pendingBatsmanSelection) {
@@ -466,7 +487,7 @@ export function LiveScorerScreen() {
       >
         <div className="space-y-2 max-h-64 overflow-y-auto">
           {bowlingTeam.players.map((player) => {
-            const stats = getBowlingStats(current.balls, player.id)
+            const stats = derived?.bowling[player.id]
             const disabled = player.id === lastBowlerId && bowlingTeam.players.length > 2
             return (
               <button
@@ -478,7 +499,7 @@ export function LiveScorerScreen() {
               >
                 <span className="font-medium" style={{ color: '#111' }}>{player.name}</span>
                 <span className="text-xs" style={{ color: '#999' }}>
-                  {stats.oversDisplay} ov · {stats.runs}r · {stats.wickets}w
+                  {stats?.oversDisplay ?? '0.0'} ov · {stats?.runs ?? 0}r · {stats?.wickets ?? 0}w
                 </span>
               </button>
             )

@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest'
+import { deriveForInnings } from '../adapter'
 import { useMatchStore } from '../../store/matchStore'
 import { migrateLegacyInnings } from '../../store/persistence'
 import type { Ball, Innings, Match } from '../../types'
@@ -83,7 +84,8 @@ describe('Store & Engine Integration (Task 4)', () => {
     // Undo 3: undoes the 1 run -> back to opening batsmen [p3, p4]
     store.undoLastBall()
     expect(useMatchStore.getState().innings[0].currentBatsmanIds).toEqual([p3, p4])
-    expect(useMatchStore.getState().innings[0].balls).toHaveLength(0)
+    const d0 = deriveForInnings(match, useMatchStore.getState().innings, 0)
+    expect(d0.balls).toHaveLength(0)
   })
 
   // 2. Record a wicket with a non-default incoming batter, score a run, undo.
@@ -177,15 +179,11 @@ describe('Store & Engine Integration (Task 4)', () => {
     }
 
     // Legal ball count unchanged (0)
-    const legalBalls = current.balls.filter((b) => b.isLegalDelivery).length
-    expect(legalBalls).toBe(0)
+    const derived = deriveForInnings(match, useMatchStore.getState().innings, 0)
+    expect(derived.score.legalBalls).toBe(0)
 
     // Total runs: 1 (no-ball penalty) + 4 (bat runs) = 5
-    const totalRuns = current.balls.reduce(
-      (sum, b) => sum + (b.extraType === 'noBall' ? 1 + b.runs : b.runs),
-      0,
-    )
-    expect(totalRuns).toBe(5)
+    expect(derived.score.runs).toBe(5)
   })
 
   // 5. Undo back to 0 balls: currentBatsmanIds are still the selected opening batsmen.
@@ -203,11 +201,15 @@ describe('Store & Engine Integration (Task 4)', () => {
     store.selectBowler(t2[0].id)
 
     store.recordRun(3)
-    expect(useMatchStore.getState().innings[0].balls).toHaveLength(1)
+    expect(
+      deriveForInnings(match, useMatchStore.getState().innings, 0).balls,
+    ).toHaveLength(1)
 
     store.undoLastBall()
     const current = useMatchStore.getState().innings[0]
-    expect(current.balls).toHaveLength(0)
+    expect(
+      deriveForInnings(match, useMatchStore.getState().innings, 0).balls,
+    ).toHaveLength(0)
     expect(current.currentBatsmanIds).toEqual([p3, p4])
   })
 
@@ -328,11 +330,8 @@ describe('Store & Engine Integration (Task 4)', () => {
     expect(migrated.events![0].type).toBe('openers')
 
     // Check score match: 1 run + 1 wide + 4 runs = 6 runs
-    const totalRuns = migrated.balls.reduce(
-      (sum, b) => sum + (b.extraType === 'wide' ? 1 + b.runs : b.runs),
-      0,
-    )
-    expect(totalRuns).toBe(6)
-    expect(migrated.balls).toHaveLength(3)
+    const derived = deriveForInnings(mockMatch, [migrated], 0)
+    expect(derived.score.runs).toBe(6)
+    expect(derived.balls).toHaveLength(3)
   })
 })

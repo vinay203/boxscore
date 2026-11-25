@@ -2,16 +2,9 @@ import { useState } from 'react'
 import { X } from 'lucide-react'
 import { Card } from './ui/Card'
 import { useMatchStore } from '../store/matchStore'
+import { getInningsSummary } from '../engine'
+import { migrateLegacyInnings } from '../store/persistence'
 import type { Match, Innings } from '../types'
-import {
-  getBattingStats,
-  getBowlingStats,
-  getExtrasBreakdown,
-  getFallOfWickets,
-  getTeamById,
-  getTotalRuns,
-  getWicketCount,
-} from '../utils/cricket'
 
 interface ScorecardScreenProps {
   onClose?: () => void
@@ -30,27 +23,21 @@ export function ScorecardScreen({
 }: ScorecardScreenProps) {
   const store = useMatchStore()
   const match = propMatch ?? store.match
-  const innings = propInnings ?? store.innings
+  const rawInnings = propInnings ?? store.innings
   const currentInningsIndex = propInnings ? 0 : store.currentInningsIndex
   const [tab, setTab] = useState<'batting' | 'bowling'>('batting')
   const [internalInningsTab, setInternalInningsTab] = useState(currentInningsIndex)
   const inningsTab = propInningsIndex ?? internalInningsTab
 
   if (!match) return null
+  const innings = rawInnings.map((inn, idx) =>
+    migrateLegacyInnings(inn, match, rawInnings, idx),
+  )
   const inningsData = innings[inningsTab]
   if (!inningsData) return null
 
-  const battingTeam = getTeamById(match, inningsData.battingTeamId)
-  const bowlingTeam = getTeamById(match, inningsData.bowlingTeamId)
-  const extras = getExtrasBreakdown(inningsData.balls)
-  const fow = getFallOfWickets(inningsData.balls, battingTeam)
+  const summary = getInningsSummary(match, innings, inningsTab)
   const currentIds = inningsData.currentBatsmanIds
-
-  const battedIds = new Set<string>()
-  for (const b of inningsData.balls) {
-    if (!b.extraType || b.extraType === 'noBall') battedIds.add(b.batsmanId)
-  }
-  const didNotBat = battingTeam.players.filter((p) => !battedIds.has(p.id))
 
   return (
     <div className={embedded ? '' : 'fixed inset-0 z-50 max-w-[430px] mx-auto overflow-y-auto'} style={embedded ? {} : { background: '#FAFAFA' }}>
@@ -62,7 +49,7 @@ export function ScorecardScreen({
         )}
         <h2 className="text-xl font-bold mb-1" style={{ color: '#111' }}>Scorecard</h2>
         <p className="text-sm mb-4" style={{ color: '#999' }}>
-          {getTotalRuns(inningsData.balls)} / {getWicketCount(inningsData.balls)} ({inningsTab === 0 ? '1st' : '2nd'} innings)
+          {summary.runs} / {summary.wickets} ({inningsTab === 0 ? '1st' : '2nd'} innings)
         </p>
 
         {innings.length > 1 && propInningsIndex === undefined && (
@@ -95,39 +82,38 @@ export function ScorecardScreen({
                   </tr>
                 </thead>
                 <tbody>
-                  {battingTeam.players.map((player) => {
-                    const stats = getBattingStats(inningsData.balls, player.id, battingTeam.players)
+                  {summary.batting.map((player) => {
+                    if (player.status === 'didNotBat') return null
                     const isCurrent = currentIds.includes(player.id)
-                    const hasBatted = battedIds.has(player.id) || stats.isOut
-                    if (!hasBatted && !stats.isOut) return null
+                    const isOut = player.status === 'out'
                     return (
-                      <tr key={player.id} className={`${isCurrent && inningsData.status === 'live' ? 'current-batsman' : ''} ${stats.isOut ? 'out-batsman' : ''}`}>
+                      <tr key={player.id} className={`${isCurrent && inningsData.status === 'live' ? 'current-batsman' : ''} ${isOut ? 'out-batsman' : ''}`}>
                         <td className="px-3 py-2">
                           <span className={isCurrent ? 'font-bold' : ''}>{player.name}</span>
-                          {stats.dismissal && <p className="text-[10px]" style={{ color: '#BBB' }}>{stats.dismissal}</p>}
+                          {player.dismissalText && <p className="text-[10px]" style={{ color: '#BBB' }}>{player.dismissalText}</p>}
                         </td>
-                        <td className="text-center px-2 py-2 font-semibold">{stats.runs}</td>
-                        <td className="text-center px-2 py-2">{stats.ballsFaced}</td>
-                        <td className="text-center px-2 py-2">{stats.fours}</td>
-                        <td className="text-center px-2 py-2">{stats.sixes}</td>
-                        <td className="text-center px-2 py-2">{stats.strikeRate.toFixed(0)}</td>
+                        <td className="text-center px-2 py-2 font-semibold">{player.runs}</td>
+                        <td className="text-center px-2 py-2">{player.ballsFaced}</td>
+                        <td className="text-center px-2 py-2">{player.fours}</td>
+                        <td className="text-center px-2 py-2">{player.sixes}</td>
+                        <td className="text-center px-2 py-2">{player.strikeRate.toFixed(0)}</td>
                       </tr>
                     )
                   })}
                 </tbody>
               </table>
             </div>
-            {didNotBat.length > 0 && (
+            {summary.didNotBat.length > 0 && (
               <p className="px-3 py-2 text-xs italic" style={{ color: '#CCC', borderTop: '1px solid #F0F0F0' }}>
-                Did not bat: {didNotBat.map((p) => p.name).join(', ')}
+                Did not bat: {summary.didNotBat.join(', ')}
               </p>
             )}
             <p className="px-3 py-2 text-xs" style={{ color: '#999', borderTop: '1px solid #F0F0F0' }}>
-              Extras: {extras.total} (w {extras.wides}, nb {extras.noBalls}, b {extras.byes}, lb {extras.legByes})
+              Extras: {summary.extras.total} (w {summary.extras.wides}, nb {summary.extras.noBalls}, b {summary.extras.byes}, lb {summary.extras.legByes})
             </p>
-            {fow.length > 0 && (
+            {summary.fallOfWickets.length > 0 && (
               <p className="px-3 py-2 text-xs" style={{ color: '#999', borderTop: '1px solid #F0F0F0' }}>
-                FOW: {fow.map((f) => `${f.wicket}-${f.score} (${f.playerName}, ${f.overDisplay} ov)`).join(', ')}
+                FOW: {summary.fallOfWickets.map((f) => `${f.wicket}-${f.score} (${f.playerName}, ${f.oversDisplay} ov)`).join(', ')}
               </p>
             )}
           </Card>
@@ -147,22 +133,18 @@ export function ScorecardScreen({
                 </tr>
               </thead>
               <tbody>
-                {bowlingTeam.players.map((player) => {
-                  const stats = getBowlingStats(inningsData.balls, player.id)
-                  if (stats.legalBalls === 0 && stats.runs === 0) return null
-                  return (
-                    <tr key={player.id} style={{ borderTop: '1px solid #F0F0F0' }}>
-                      <td className="px-3 py-2 font-medium">{player.name}</td>
-                      <td className="text-center px-2 py-2">{stats.oversDisplay}</td>
-                      <td className="text-center px-2 py-2">{stats.maidens}</td>
-                      <td className="text-center px-2 py-2">{stats.runs}</td>
-                      <td className="text-center px-2 py-2">{stats.wickets}</td>
-                      <td className={`text-center px-2 py-2 ${stats.economy < 6 ? 'economy good' : stats.economy <= 9 ? 'economy average' : 'economy expensive'}`}>
-                        {stats.economy.toFixed(1)}
-                      </td>
-                    </tr>
-                  )
-                })}
+                {summary.bowling.map((bowler) => (
+                  <tr key={bowler.id} style={{ borderTop: '1px solid #F0F0F0' }}>
+                    <td className="px-3 py-2 font-medium">{bowler.name}</td>
+                    <td className="text-center px-2 py-2">{bowler.oversDisplay}</td>
+                    <td className="text-center px-2 py-2">{bowler.maidens}</td>
+                    <td className="text-center px-2 py-2">{bowler.runs}</td>
+                    <td className="text-center px-2 py-2">{bowler.wickets}</td>
+                    <td className={`text-center px-2 py-2 ${bowler.economy < 6 ? 'economy good' : bowler.economy <= 9 ? 'economy average' : 'economy expensive'}`}>
+                      {bowler.economy.toFixed(1)}
+                    </td>
+                  </tr>
+                ))}
               </tbody>
             </table>
           </Card>

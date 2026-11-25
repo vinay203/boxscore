@@ -1,8 +1,12 @@
 import { create } from 'zustand'
 import {
   deriveForInnings,
+  formatScore,
+  getInningsSummary,
+  getMatchResultFromState,
+  getPlayerOfTheMatch,
   syncInnings,
-} from '../engine/adapter'
+} from '../engine'
 import type { DeliveryKind, InningsEvent } from '../engine/types'
 import type {
   CompletedMatchSummary,
@@ -25,14 +29,7 @@ import {
   saveCurrentMatch,
   saveToHistory,
 } from './persistence'
-import {
-  formatScore,
-  generateId,
-  getMatchResult,
-  getPlayerOfTheMatch,
-  getTotalRuns,
-  getWicketCount,
-} from '../utils/cricket'
+import { generateId } from '../utils/cricket'
 
 interface SetupDraft {
   title: string
@@ -129,7 +126,6 @@ function createInitialInnings(
   return {
     battingTeamId,
     bowlingTeamId,
-    balls: [],
     currentBatsmanIds: [
       battingTeam.players[0]?.id || '',
       battingTeam.players[1]?.id || '',
@@ -774,7 +770,7 @@ export const useMatchStore = create<AppStore>((set, get) => ({
     const lastBall = remainingBalls.at(-1)
     const currentBowlerId = lastBall ? lastBall.bowlerId : ''
     const pendingBowlerSelection =
-      derived.needsNewBowler || synced.balls.length === 0
+      derived.needsNewBowler || derived.balls.length === 0
 
     const restored: Innings = {
       ...synced,
@@ -837,35 +833,28 @@ export const useMatchStore = create<AppStore>((set, get) => ({
     const { match, innings } = state
     if (!match) return
 
-    const result = getMatchResult(match, innings)
-    const team1Inn = innings.find((i) => i.battingTeamId === match.team1.id)
-    const team2Inn = innings.find((i) => i.battingTeamId === match.team2.id)
+    const result = getMatchResultFromState(match, innings)
+    const team1Idx = innings.findIndex((i) => i.battingTeamId === match.team1.id)
+    const team2Idx = innings.findIndex((i) => i.battingTeamId === match.team2.id)
+    const team1Summary =
+      team1Idx >= 0 ? getInningsSummary(match, innings, team1Idx) : null
+    const team2Summary =
+      team2Idx >= 0 ? getInningsSummary(match, innings, team2Idx) : null
     const potm = getPlayerOfTheMatch(match, innings)
 
     const summary: CompletedMatchSummary = {
       id: generateId(),
       date: new Date().toISOString(),
       title: match.title,
-      winnerName:
-        result.winnerId === match.team1.id
-          ? match.team1.name
-          : result.winnerId === match.team2.id
-            ? match.team2.name
-            : 'Tie',
+      winnerName: result.winnerName ?? 'Tie',
       resultText: result.text,
       team1Name: match.team1.name,
-      team1Score: team1Inn
-        ? formatScore(
-            getTotalRuns(team1Inn.balls),
-            getWicketCount(team1Inn.balls),
-          )
+      team1Score: team1Summary
+        ? formatScore(team1Summary.runs, team1Summary.wickets)
         : '-',
       team2Name: match.team2.name,
-      team2Score: team2Inn
-        ? formatScore(
-            getTotalRuns(team2Inn.balls),
-            getWicketCount(team2Inn.balls),
-          )
+      team2Score: team2Summary
+        ? formatScore(team2Summary.runs, team2Summary.wickets)
         : '-',
       match: JSON.parse(JSON.stringify(match)),
       innings: JSON.parse(JSON.stringify(innings)),

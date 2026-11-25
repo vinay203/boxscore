@@ -9,16 +9,19 @@ import {
   Users,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
-import type { CompletedMatchSummary, Match, Innings, Ball } from '../types'
+import type { CompletedMatchSummary, Match, Innings } from '../types'
 import { Card } from './ui/Card'
 import { ScorecardScreen } from './ScorecardScreen'
 import {
+  deriveForInnings,
   formatScore,
-  getLegalBallCount,
+  getInningsSummary,
+  type DerivedBall,
+} from '../engine'
+import { migrateLegacyInnings } from '../store/persistence'
+import {
   getPlayerById,
   getTeamById,
-  getTotalRuns,
-  getWicketCount,
 } from '../utils/cricket'
 
 interface MatchHistoryDetailScreenProps {
@@ -37,8 +40,14 @@ export function MatchHistoryDetailScreen({
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
 
   const match = summary.match
-  const innings = summary.innings
-  const hasFullData = !!(match && innings && innings.length > 0)
+  const rawInnings = summary.innings
+  const hasFullData = !!(match && rawInnings && rawInnings.length > 0)
+  const innings =
+    hasFullData && match
+      ? rawInnings.map((inn, idx) =>
+          migrateLegacyInnings(inn, match, rawInnings, idx),
+        )
+      : []
 
   const formattedDate = new Date(summary.date).toLocaleDateString(undefined, {
     weekday: 'short',
@@ -218,10 +227,7 @@ export function MatchHistoryDetailScreen({
             <div className="tab-switcher mb-3">
               {innings.map((inn, idx) => {
                 const team = getTeamById(match, inn.battingTeamId)
-                const runs = getTotalRuns(inn.balls)
-                const wkts = getWicketCount(inn.balls)
-                const legalBalls = getLegalBallCount(inn.balls)
-                const ovStr = `${Math.floor(legalBalls / 6)}.${legalBalls % 6}`
+                const innSummary = getInningsSummary(match, innings, idx)
                 return (
                   <button
                     key={idx}
@@ -231,7 +237,7 @@ export function MatchHistoryDetailScreen({
                   >
                     <span className="block font-semibold">{team.name}</span>
                     <span className="text-[11px] opacity-80">
-                      {formatScore(runs, wkts)} ({ovStr} ov)
+                      {formatScore(innSummary.runs, innSummary.wickets)} ({innSummary.oversDisplay} ov)
                     </span>
                   </button>
                 )
@@ -292,7 +298,8 @@ export function MatchHistoryDetailScreen({
           {activeViewMode === 'timeline' && (
             <BallByBallTimeline
               match={match}
-              innings={innings[activeInningsTab]}
+              allInnings={innings}
+              inningsIndex={activeInningsTab}
             />
           )}
 
@@ -311,19 +318,24 @@ export function MatchHistoryDetailScreen({
  */
 function BallByBallTimeline({
   match,
-  innings,
+  allInnings,
+  inningsIndex,
 }: {
   match?: Match
-  innings?: Innings
+  allInnings?: Innings[]
+  inningsIndex: number
 }) {
-  if (!match || !innings) return null
+  if (!match || !allInnings || !allInnings[inningsIndex]) return null
 
-  const bowlingTeam = getTeamById(match, innings.bowlingTeamId)
-  const battingTeam = getTeamById(match, innings.battingTeamId)
+  const currentInnings = allInnings[inningsIndex]
+  const bowlingTeam = getTeamById(match, currentInnings.bowlingTeamId)
+  const battingTeam = getTeamById(match, currentInnings.battingTeamId)
+
+  const derived = deriveForInnings(match, allInnings, inningsIndex)
 
   // Group balls by over
-  const oversMap = new Map<number, Ball[]>()
-  for (const b of innings.balls) {
+  const oversMap = new Map<number, DerivedBall[]>()
+  for (const b of derived.balls) {
     const list = oversMap.get(b.over) || []
     list.push(b)
     oversMap.set(b.over, list)
@@ -350,12 +362,8 @@ function BallByBallTimeline({
         let overWickets = 0
 
         for (const b of balls) {
-          if (b.extraType === 'wide' || b.extraType === 'noBall') {
-            overRuns += 1 + b.runs
-          } else {
-            overRuns += b.runs
-          }
-          if (b.isWicket) overWickets++
+          overRuns += b.totalRuns
+          if (b.wicket) overWickets++
         }
 
         return (
@@ -372,32 +380,58 @@ function BallByBallTimeline({
                 )}
               </div>
               <span className="text-xs font-semibold text-gray-700 bg-gray-100 px-2 py-0.5 rounded-full">
-                {overRuns} run{overRuns !== 1 ? 's' : ''}{overWickets > 0 ? ` • ${overWickets} wkt${overWickets > 1 ? 's' : ''}` : ''}
+                {overRuns} run{overRuns !== 1 ? 's' : ''}
+                {overWickets > 0 ? ` • ${overWickets} wkt${overWickets > 1 ? 's' : ''}` : ''}
               </span>
             </div>
 
             {/* Ball dots row */}
             <div className="flex flex-wrap gap-2 pt-1">
               {balls.map((b, bIdx) => {
-                const batsman = getPlayerById(battingTeam, b.batsmanId)
+                const batsman = getPlayerById(battingTeam, b.strikerId)
                 let badgeClass = 'ball-dot runs'
-                let label = `${b.runs}`
+                let label = `${b.batRuns}`
 
-                if (b.isWicket) {
+                if (b.wicket) {
                   badgeClass = 'ball-dot wicket'
                   label = 'W'
-                } else if (b.extraType === 'wide') {
+                } else if (b.delivery === 'wide') {
                   badgeClass = 'ball-dot wide'
-                  label = b.runs > 0 ? `Wd+${b.runs}` : 'Wd'
-                } else if (b.extraType === 'noBall') {
+                  label = b.wideExtraRuns > 0 ? `Wd+${b.wideExtraRuns}` : 'Wd'
+                } else if (b.delivery === 'noBall') {
                   badgeClass = 'ball-dot noball'
-                  label = b.runs > 0 ? `Nb+${b.runs}` : 'Nb'
-                } else if (b.extraType === 'bye') {
+                  label = b.batRuns > 0 ? `Nb+${b.batRuns}` : 'Nb'
+                } else if (b.byeRuns > 0) {
                   badgeClass = 'ball-dot'
-                  label = `B${b.runs}`
-                } else if (b.extraType === 'legBye') {
+                  label = `B${b.byeRuns}`
+                } else if (b.legByeRuns > 0) {
                   badgeClass = 'ball-dot'
-                  label = `Lb${b.runs}`
+                  label = `Lb${b.legByeRuns}`
+                } else if (b.batRuns === 0) {
+                  badgeClass = 'ball-dot dot'
+                  label = '·'
+                } else if (b.batRuns === 4) {
+                  badgeClass = 'ball-dot four'
+                } else if (b.batRuns === 6) {
+                  badgeClass = 'ball-dot six'
+                }
+
+                return (
+                  <div key={bIdx} className="flex flex-col items-center">
+                    <span className={badgeClass}>{label}</span>
+                    <span className="text-[9px] text-gray-400 mt-0.5 max-w-[36px] truncate text-center">
+                      {batsman?.name.split(' ')[0] ?? ''}
+                    </span>
+                  </div>
+                )
+              })}
+            </div>
+          </Card>
+        )
+      })}
+    </div>
+  )
+}
                 } else if (b.runs === 0) {
                   badgeClass = 'ball-dot dot'
                   label = '•'

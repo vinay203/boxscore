@@ -46,7 +46,7 @@ export interface Ball {
 export interface Innings {
   battingTeamId: string
   bowlingTeamId: string
-  balls: Ball[]
+  balls?: Ball[]
   currentBatsmanIds: [string, string]
   currentBowlerId: string
   status: InningsStatus

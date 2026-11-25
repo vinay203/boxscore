@@ -111,7 +111,7 @@ export function deriveInnings(
 
   function setBattingStatus(id: string): void {
     const b = getOrCreateBatting(id)
-    if (b.status !== 'out' && b.status !== 'retiredHurt') {
+    if (b.status !== 'out') {
       b.status = 'batting'
     }
   }
@@ -147,11 +147,11 @@ export function deriveInnings(
       case 'bowled':
         return `b ${bowlerName}`
       case 'caught':
-        return fielderName ? `c ${fielderName} b ${bowlerName}` : `c ? b ${bowlerName}`
+        return fielderName ? `c ${fielderName} b ${bowlerName}` : `caught b ${bowlerName}`
       case 'lbw':
         return `lbw b ${bowlerName}`
       case 'stumped':
-        return fielderName ? `st ${fielderName} b ${bowlerName}` : `st ? b ${bowlerName}`
+        return fielderName ? `st ${fielderName} b ${bowlerName}` : `stumped b ${bowlerName}`
       case 'hitWicket':
         return `hit wicket b ${bowlerName}`
       case 'runOut':
@@ -230,7 +230,7 @@ export function deriveInnings(
       bStats.dismissalText = 'retired hurt'
 
       if (ev.batterId === strikerId) {
-        if (ev.replacementId) {
+        if (ev.replacementId && batting[ev.replacementId]?.status !== 'out') {
           strikerId = ev.replacementId
           setBattingStatus(ev.replacementId)
           needsNewBatter = false
@@ -239,7 +239,7 @@ export function deriveInnings(
           needsNewBatter = true
         }
       } else if (ev.batterId === nonStrikerId) {
-        if (ev.replacementId) {
+        if (ev.replacementId && batting[ev.replacementId]?.status !== 'out') {
           nonStrikerId = ev.replacementId
           setBattingStatus(ev.replacementId)
           needsNewBatter = false
@@ -268,7 +268,7 @@ export function deriveInnings(
       currentPartnership = { runs: 0, balls: 0 }
 
       if (ev.outId === strikerId) {
-        if (ev.newBatterId) {
+        if (ev.newBatterId && batting[ev.newBatterId]?.status !== 'out') {
           strikerId = ev.newBatterId
           setBattingStatus(ev.newBatterId)
           needsNewBatter = false
@@ -277,7 +277,7 @@ export function deriveInnings(
           needsNewBatter = true
         }
       } else if (ev.outId === nonStrikerId) {
-        if (ev.newBatterId) {
+        if (ev.newBatterId && batting[ev.newBatterId]?.status !== 'out') {
           nonStrikerId = ev.newBatterId
           setBattingStatus(ev.newBatterId)
           needsNewBatter = false
@@ -508,7 +508,7 @@ export function deriveInnings(
 
         // Rule 9: The dismissed batter is replaced IN PLACE by newBatterId
         if (validWicket.outId === strikerId) {
-          if (validWicket.newBatterId) {
+          if (validWicket.newBatterId && batting[validWicket.newBatterId]?.status !== 'out') {
             strikerId = validWicket.newBatterId
             setBattingStatus(validWicket.newBatterId)
             needsNewBatter = false
@@ -517,7 +517,7 @@ export function deriveInnings(
             needsNewBatter = true
           }
         } else if (validWicket.outId === nonStrikerId) {
-          if (validWicket.newBatterId) {
+          if (validWicket.newBatterId && batting[validWicket.newBatterId]?.status !== 'out') {
             nonStrikerId = validWicket.newBatterId
             setBattingStatus(validWicket.newBatterId)
             needsNewBatter = false

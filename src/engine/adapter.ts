@@ -1,16 +1,12 @@
 import type {
-  Ball,
-  ExtraType,
   Innings,
   InningsStatus,
   Match,
-  WicketType,
 } from '../types'
 import { deriveInnings } from './deriveInnings'
 import {
   defaultRules,
   type DerivedInnings,
-  type InningsEvent,
   type MatchRules,
 } from './types'
 
@@ -57,76 +53,6 @@ export function deriveForInnings(
   })
 }
 
-export function toLegacyBalls(
-  _events: InningsEvent[],
-  derived: DerivedInnings,
-): Ball[] {
-  let legalSoFar = 0
-  const legacyBalls: Ball[] = []
-
-  for (const b of derived.balls) {
-    const isLegalDelivery = b.isLegal
-    const over = Math.floor(legalSoFar / 6)
-    const ball = (legalSoFar % 6) + 1
-    if (isLegalDelivery) {
-      legalSoFar++
-    }
-
-    let runs = b.batRuns
-    let extraType: ExtraType | undefined = undefined
-
-    if (b.delivery === 'wide') {
-      extraType = 'wide'
-      runs = b.wideExtraRuns
-    } else if (b.delivery === 'noBall') {
-      extraType = 'noBall'
-      runs = b.batRuns
-    } else if (b.byeRuns > 0) {
-      extraType = 'bye'
-      runs = b.byeRuns
-    } else if (b.legByeRuns > 0) {
-      extraType = 'legBye'
-      runs = b.legByeRuns
-    }
-
-    const isWicket = !!b.wicket
-    let wicketType: WicketType | undefined = undefined
-    let outBatsmanId: string | undefined = undefined
-
-    if (b.wicket) {
-      outBatsmanId = b.wicket.outId
-      const k = b.wicket.kind
-      if (
-        k === 'bowled' ||
-        k === 'caught' ||
-        k === 'runOut' ||
-        k === 'lbw' ||
-        k === 'stumped' ||
-        k === 'hitWicket'
-      ) {
-        wicketType = k
-      } else {
-        wicketType = 'runOut'
-      }
-    }
-
-    legacyBalls.push({
-      over,
-      ball,
-      batsmanId: b.strikerId,
-      bowlerId: b.bowlerId,
-      runs,
-      extraType,
-      isWicket,
-      wicketType,
-      outBatsmanId,
-      isLegalDelivery,
-    })
-  }
-
-  return legacyBalls
-}
-
 export function syncInnings(
   innings: Innings,
   match: Match,
@@ -137,7 +63,6 @@ export function syncInnings(
   updatedAllInnings[inningsIndex] = innings
 
   const derived = deriveForInnings(match, updatedAllInnings, inningsIndex)
-  const balls = toLegacyBalls(innings.events ?? [], derived)
   const currentBatsmanIds: [string, string] = [
     derived.strikerId ?? '',
     derived.nonStrikerId ?? '',
@@ -163,7 +88,6 @@ export function syncInnings(
 
   return {
     ...innings,
-    balls,
     currentBatsmanIds,
     currentBowlerId,
     pendingBatsmanSelection,
