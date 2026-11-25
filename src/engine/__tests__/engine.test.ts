@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
-import { deriveInnings } from '../deriveInnings'
+import { allowedWicketKinds, deriveInnings } from '../deriveInnings'
 import { getResultText } from '../result'
-import { defaultRules, type InningsContext, type InningsEvent } from '../types'
+import { defaultRules, type InningsContext, type InningsEvent, type WicketKind } from '../types'
 
 function makeCtx(overrides?: Partial<InningsContext>): InningsContext {
   return {
@@ -30,6 +30,17 @@ function makeCtx(overrides?: Partial<InningsContext>): InningsContext {
 }
 
 describe('Cricket Scoring Engine (pure TypeScript)', () => {
+  it('allowedWicketKinds covers the delivery and free-hit matrix', () => {
+    const ordinary: WicketKind[] = ['bowled', 'caught', 'lbw', 'stumped', 'hitWicket', 'runOut', 'obstructingField', 'hitBallTwice']
+    const wide: WicketKind[] = ['stumped', 'hitWicket', 'runOut', 'obstructingField', 'hitBallTwice']
+    const restricted: WicketKind[] = ['runOut', 'obstructingField', 'hitBallTwice']
+    expect(allowedWicketKinds('legal', false)).toEqual(ordinary)
+    expect(allowedWicketKinds('wide', false)).toEqual(wide)
+    expect(allowedWicketKinds('noBall', false)).toEqual(restricted)
+    expect(allowedWicketKinds('legal', true)).toEqual(restricted)
+    expect(allowedWicketKinds('wide', true)).toEqual(restricted)
+  })
+
   // Test 1
   it('1. Over end swaps strike; odd run swaps; odd run on the last ball of an over results in no net swap', () => {
     const ctx = makeCtx()

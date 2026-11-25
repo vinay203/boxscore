@@ -16,6 +16,7 @@ import { PageTransition } from './ui/PageTransition'
 import { ScorecardScreen } from './ScorecardScreen'
 import { useMatchStore } from '../store/matchStore'
 import {
+  allowedWicketKinds,
   deriveForInnings,
   getCurrentOverBalls,
   getInningsSummary,
@@ -24,6 +25,7 @@ import {
   type DerivedBall,
 } from '../engine'
 import type { ExtraType, Team, WicketType } from '../types'
+import type { WicketKind } from '../engine/types'
 import {
   getPlayerById,
   getPlayerName,
@@ -31,13 +33,15 @@ import {
   vibrate,
 } from '../utils/cricket'
 
-const DISMISSAL_TYPES: { type: WicketType; label: string }[] = [
+const DISMISSAL_TYPES: { type: WicketKind; label: string }[] = [
   { type: 'bowled', label: 'Bowled' },
   { type: 'caught', label: 'Caught' },
   { type: 'runOut', label: 'Run Out' },
   { type: 'lbw', label: 'LBW' },
   { type: 'stumped', label: 'Stumped' },
   { type: 'hitWicket', label: 'Hit Wicket' },
+  { type: 'obstructingField', label: 'Obstructing Field' },
+  { type: 'hitBallTwice', label: 'Hit Ball Twice' },
 ]
 
 function BallDot({ ball }: { ball: DerivedBall }) {
@@ -147,8 +151,7 @@ export function LiveScorerScreen() {
     matchStatus,
     showScorecard,
     setShowScorecard,
-    recordRun,
-    recordExtra,
+    recordDelivery,
     recordWicket,
     selectBowler,
     cancelBowlerSelection,
@@ -168,7 +171,8 @@ export function LiveScorerScreen() {
   const [wicketType, setWicketType] = useState<WicketType>('bowled')
   const [outBatsmanId, setOutBatsmanId] = useState('')
   const [newBatsmanId, setNewBatsmanId] = useState('')
-  const [byePickerOpen, setByePickerOpen] = useState<ExtraType | null>(null)
+  const [selectedDelivery, setSelectedDelivery] = useState<'wide' | 'noBall' | null>(null)
+  const [selectedBye, setSelectedBye] = useState<'bye' | 'legBye' | null>(null)
   const [confirmEndInnings, setConfirmEndInnings] = useState(false)
 
   // Switch / Retire batsman modal state
@@ -238,7 +242,21 @@ export function LiveScorerScreen() {
       return
     }
     vibrate()
-    recordRun(runs)
+    if (!selectedDelivery && !selectedBye) {
+      recordDelivery({ delivery: 'legal', batRuns: runs })
+    } else if (selectedDelivery === 'wide') {
+      recordDelivery({ delivery: 'wide', wideExtraRuns: runs })
+    } else if (selectedDelivery === 'noBall' && selectedBye) {
+      recordDelivery({ delivery: 'noBall', [selectedBye === 'bye' ? 'byeRuns' : 'legByeRuns']: runs })
+    } else if (selectedDelivery === 'noBall') {
+      recordDelivery({ delivery: 'noBall', batRuns: runs })
+    } else if (selectedBye === 'bye') {
+      recordDelivery({ delivery: 'legal', byeRuns: runs })
+    } else if (selectedBye === 'legBye') {
+      recordDelivery({ delivery: 'legal', legByeRuns: runs })
+    }
+    setSelectedDelivery(null)
+    setSelectedBye(null)
   }
 
   const handleExtra = (type: ExtraType) => {
@@ -246,21 +264,36 @@ export function LiveScorerScreen() {
       changeBowlerRequest()
       return
     }
-    if (type === 'bye' || type === 'legBye') {
-      setByePickerOpen(type)
-      return
-    }
     vibrate()
-    recordExtra(type)
+    if (type === 'wide') {
+      setSelectedDelivery((selected) => selected === 'wide' ? null : 'wide')
+      setSelectedBye(null)
+    } else if (type === 'noBall') {
+      setSelectedDelivery((selected) => selected === 'noBall' ? null : 'noBall')
+    } else {
+      setSelectedBye((selected) => selected === type ? null : type)
+      setSelectedDelivery((selected) => selected === 'wide' ? null : selected)
+    }
   }
 
-  const confirmBye = (runs: number) => {
-    vibrate()
-    recordExtra(byePickerOpen!, runs)
-    setByePickerOpen(null)
+  const clearModifier = () => {
+    setSelectedDelivery(null)
+    setSelectedBye(null)
   }
+  const selectedModifier = selectedDelivery || selectedBye
+  const enabledRuns = selectedBye ? [1, 2, 3, 4] : selectedDelivery === 'wide' ? [0, 1, 2, 3, 4] : [0, 1, 2, 3, 4, 6]
+  const modifierCaption = selectedDelivery === 'wide'
+    ? 'Wide + extra runs'
+    : selectedDelivery === 'noBall' && selectedBye
+      ? `No Ball + ${selectedBye === 'bye' ? 'Byes' : 'Leg Byes'}`
+      : selectedDelivery === 'noBall'
+        ? 'No Ball + runs off the bat'
+        : selectedBye === 'bye' ? 'Bye' : selectedBye === 'legBye' ? 'Leg Bye' : ''
+  const allowedWickets = allowedWicketKinds('legal', !!derived?.isFreeHitNext)
+  const effectiveWicketType = allowedWickets.includes(wicketType) ? wicketType : allowedWickets[0]
 
   const openWicket = () => {
+    if (selectedDelivery || selectedBye) return
     if (!current?.currentBowlerId || current?.pendingBowlerSelection || current?.pendingBatsmanSelection) {
       changeBowlerRequest()
       return
@@ -269,13 +302,15 @@ export function LiveScorerScreen() {
     const defaultNew = remainingBatsmen[0]?.id ?? ''
     setOutBatsmanId(defaultOut)
     setNewBatsmanId(defaultNew)
+    const allowed = allowedWicketKinds('legal', !!derived?.isFreeHitNext)
+    if (!allowed.includes(wicketType as WicketKind)) setWicketType(allowed[0] as WicketType)
     setWicketOpen(true)
   }
 
   const confirmWicket = () => {
     const actualNew = newBatsmanId || remainingBatsmen[0]?.id || ''
     vibrate()
-    recordWicket(wicketType, outBatsmanId || strikerId, actualNew)
+    recordWicket(effectiveWicketType as WicketType, outBatsmanId || strikerId, actualNew)
     setWicketOpen(false)
   }
 
@@ -352,8 +387,12 @@ export function LiveScorerScreen() {
           </p>
           <p className="score-overs">{oversDisplay}</p>
           {required && currentInningsIndex === 1 && (
-            <p className="target-pill">Need {required.runs} in {required.balls} balls</p>
+            <div className="flex items-center justify-center gap-2">
+              <p className="target-pill">Need {required.runs} in {required.balls} balls</p>
+              {derived?.isFreeHitNext && <span className="target-pill">FREE HIT</span>}
+            </div>
           )}
+          {derived?.isFreeHitNext && currentInningsIndex !== 1 && <p className="target-pill">FREE HIT</p>}
         </div>
 
         {/* This over strip */}
@@ -439,15 +478,20 @@ export function LiveScorerScreen() {
 
         {/* Scoring buttons container */}
         <div className="space-y-3">
+          {selectedModifier && (
+            <p className="text-center text-xs" style={{ color: '#777' }}>
+              {modifierCaption} · Tap the runs to confirm
+            </p>
+          )}
           <div className="run-buttons">
             {[0, 1, 2, 3, 4, 6].map((r) => (
-              <button key={r} type="button" onClick={() => handleRun(r)} className={`run-button run-${r}`}>{r}</button>
+              <button key={r} type="button" disabled={!enabledRuns.includes(r)} onClick={() => handleRun(r)} className={`run-button run-${r}`} aria-disabled={!enabledRuns.includes(r)}>{r}</button>
             ))}
           </div>
 
           <div className="flex flex-wrap justify-center gap-2" style={{ marginTop: '12px' }}>
             {(['wide', 'noBall', 'bye', 'legBye'] as ExtraType[]).map((type) => (
-              <button key={type} type="button" onClick={() => handleExtra(type)} className="extra-button btn-press">
+              <button key={type} type="button" onClick={() => handleExtra(type)} aria-pressed={type === 'wide' ? selectedDelivery === 'wide' : type === 'noBall' ? selectedDelivery === 'noBall' : selectedBye === type} className={`extra-button btn-press ${((type === 'wide' && selectedDelivery === 'wide') || (type === 'noBall' && selectedDelivery === 'noBall') || ((type === 'bye' || type === 'legBye') && selectedBye === type)) ? 'selected' : ''}`}>
                 {type === 'wide' ? 'Wide' : type === 'noBall' ? 'No Ball' : type === 'bye' ? 'Bye' : 'Leg Bye'}
               </button>
             ))}
@@ -455,13 +499,13 @@ export function LiveScorerScreen() {
 
           {/* WICKET BUTTON - Prominent & Un-cut */}
           <div className="pt-1 pb-1">
-            <Button fullWidth variant="danger" onClick={openWicket}>
+            <Button fullWidth variant="danger" onClick={openWicket} disabled={!!selectedModifier} title={selectedModifier ? 'Clear the extra first' : undefined}>
               WICKET
             </Button>
           </div>
 
           <div className="flex items-center justify-between">
-            <button type="button" onClick={undoLastBall} className="undo-button flex items-center gap-1 py-2 btn-press">
+            <button type="button" onClick={() => { undoLastBall(); clearModifier() }} className="undo-button flex items-center gap-1 py-2 btn-press">
               <Undo2 size={13} /> Undo Ball
             </button>
             <button type="button" onClick={() => setConfirmEndInnings(true)} className="action-btn action-btn--end">
@@ -597,8 +641,8 @@ export function LiveScorerScreen() {
       <BottomSheet open={wicketOpen} onClose={() => setWicketOpen(false)} title="Wicket">
         <div className="grid grid-cols-2 gap-2 mb-4">
           {DISMISSAL_TYPES.map((d) => (
-            <button key={d.type} type="button" onClick={() => setWicketType(d.type)}
-              className={`toss-btn ${wicketType === d.type ? 'selected' : ''}`} style={{ padding: '10px', fontSize: '13px' }}>
+            <button key={d.type} type="button" disabled={!!derived?.isFreeHitNext && !allowedWickets.includes(d.type)} onClick={() => setWicketType(d.type as WicketType)}
+              className={`toss-btn ${effectiveWicketType === d.type ? 'selected' : ''} ${derived?.isFreeHitNext && !allowedWickets.includes(d.type) ? 'disabled' : ''}`} style={{ padding: '10px', fontSize: '13px' }}>
               {d.label}
             </button>
           ))}
@@ -621,15 +665,6 @@ export function LiveScorerScreen() {
           </>
         )}
         <Button fullWidth variant="danger" onClick={confirmWicket}>Confirm Wicket</Button>
-      </BottomSheet>
-
-      {/* Bye picker */}
-      <BottomSheet open={!!byePickerOpen} onClose={() => setByePickerOpen(null)} title={`${byePickerOpen === 'legBye' ? 'Leg Bye' : 'Bye'} — Runs`}>
-        <div className="flex justify-center gap-3">
-          {[1, 2, 3, 4].map((r) => (
-            <button key={r} type="button" onClick={() => confirmBye(r)} className="run-button run-1 btn-press">{r}</button>
-          ))}
-        </div>
       </BottomSheet>
 
       {/* End innings confirmation */}

@@ -6,22 +6,22 @@ import type {
   InningsEvent,
   PlayerBattingStats,
   PlayerBowlingStats,
+  DeliveryKind,
   WicketKind,
 } from './types'
 
-const ALLOWED_FREE_HIT_OR_NO_BALL_WICKETS: WicketKind[] = [
-  'runOut',
-  'obstructingField',
-  'hitBallTwice',
+const ALL_WICKET_KINDS: WicketKind[] = [
+  'bowled', 'caught', 'lbw', 'stumped', 'hitWicket', 'runOut',
+  'obstructingField', 'hitBallTwice',
 ]
+const FREE_HIT_WICKET_KINDS: WicketKind[] = ['runOut', 'obstructingField', 'hitBallTwice']
+const WIDE_WICKET_KINDS: WicketKind[] = ['stumped', 'hitWicket', ...FREE_HIT_WICKET_KINDS]
 
-const ALLOWED_WIDE_WICKETS: WicketKind[] = [
-  'stumped',
-  'hitWicket',
-  'runOut',
-  'obstructingField',
-  'hitBallTwice',
-]
+export function allowedWicketKinds(delivery: DeliveryKind, isFreeHit: boolean): WicketKind[] {
+  if (isFreeHit || delivery === 'noBall') return [...FREE_HIT_WICKET_KINDS]
+  if (delivery === 'wide') return [...WIDE_WICKET_KINDS]
+  return [...ALL_WICKET_KINDS]
+}
 
 const BOWLER_CREDITED_WICKETS: WicketKind[] = [
   'bowled',
@@ -366,20 +366,11 @@ export function deriveInnings(
       // Validate wicket if present
       let validWicket = ev.wicket
       if (validWicket) {
-        if (isThisBallFreeHit || isNoBall) {
-          if (!ALLOWED_FREE_HIT_OR_NO_BALL_WICKETS.includes(validWicket.kind)) {
-            errors.push(
-              `Disallowed wicket '${validWicket.kind}' on ${isNoBall ? 'no-ball' : 'free hit'}; wicket ignored`,
-            )
-            validWicket = undefined
-          }
-        } else if (isWide) {
-          if (!ALLOWED_WIDE_WICKETS.includes(validWicket.kind)) {
-            errors.push(
-              `Disallowed wicket '${validWicket.kind}' on wide; wicket ignored`,
-            )
-            validWicket = undefined
-          }
+        if (!allowedWicketKinds(ev.delivery, isThisBallFreeHit).includes(validWicket.kind)) {
+          errors.push(
+            `Disallowed wicket '${validWicket.kind}' on ${isNoBall ? 'no-ball' : isThisBallFreeHit ? 'free hit' : isWide ? 'wide' : 'legal delivery'}; wicket ignored`,
+          )
+          validWicket = undefined
         }
       }
 

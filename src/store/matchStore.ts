@@ -70,6 +70,13 @@ interface AppStore extends MatchState {
   startMatch: () => void
   recordRun: (runs: number) => void
   recordExtra: (type: ExtraType, runs?: number) => void
+  recordDelivery: (input: {
+    delivery: DeliveryKind
+    batRuns?: number
+    byeRuns?: number
+    legByeRuns?: number
+    wideExtraRuns?: number
+  }) => void
   recordWicket: (
     wicketType: WicketType,
     outBatsmanId: string,
@@ -302,70 +309,26 @@ export const useMatchStore = create<AppStore>((set, get) => ({
     set({ ...newState, screen: 'live' })
   },
 
-  recordRun: (runs) => {
-    const state = get()
-    const { match, innings, currentInningsIndex } = state
-    if (!match || state.matchStatus !== 'live') return
-
-    const current = innings[currentInningsIndex]
-    if (
-      current.pendingBowlerSelection ||
-      current.pendingBatsmanSelection ||
-      !current.currentBowlerId
-    )
-      return
-    if (current.status === 'complete') return
-
-    const ballEvent: InningsEvent = {
-      id: generateId(),
-      type: 'ball',
-      bowlerId: current.currentBowlerId,
-      delivery: 'legal',
-      batRuns: runs,
-      byeRuns: 0,
-      legByeRuns: 0,
-      wideExtraRuns: 0,
-    }
-
-    const updatedCurrent: Innings = {
-      ...current,
-      events: [...(current.events ?? []), ballEvent],
-    }
-
-    const synced = syncInnings(
-      updatedCurrent,
-      match,
-      innings,
-      currentInningsIndex,
-    )
-    const newInnings = [...innings]
-    newInnings[currentInningsIndex] = synced
-
-    const derived = deriveForInnings(match, newInnings, currentInningsIndex)
-    const matchStatus: MatchStatus = derived.isComplete
-      ? currentInningsIndex === 0
-        ? 'innings_break'
-        : 'complete'
-      : 'live'
-
-    const newState: MatchState = {
-      match,
-      innings: newInnings,
-      currentInningsIndex,
-      matchStatus,
-    }
-
-    persist(newState)
-    set(newState)
-    if (matchStatus === 'complete') {
-      get().finishMatch()
-    }
-  },
+  recordRun: (runs) => get().recordDelivery({ delivery: 'legal', batRuns: runs }),
 
   recordExtra: (type, runs = 0) => {
+    if (type === 'wide') get().recordDelivery({ delivery: 'wide', wideExtraRuns: runs })
+    else if (type === 'noBall') get().recordDelivery({ delivery: 'noBall', batRuns: runs })
+    else if (type === 'bye') get().recordDelivery({ delivery: 'legal', byeRuns: runs })
+    else get().recordDelivery({ delivery: 'legal', legByeRuns: runs })
+  },
+
+  recordDelivery: (input) => {
     const state = get()
     const { match, innings, currentInningsIndex } = state
     if (!match || state.matchStatus !== 'live') return
+
+    const has = (key: keyof typeof input) => Object.prototype.hasOwnProperty.call(input, key)
+    if (input.delivery === 'wide' && (has('batRuns') || has('byeRuns') || has('legByeRuns'))) return
+    if (has('byeRuns') && has('legByeRuns')) return
+    if (has('batRuns') && (has('byeRuns') || has('legByeRuns'))) return
+    if (input.delivery === 'legal' &&
+      ((has('byeRuns') && input.byeRuns === 0) || (has('legByeRuns') && input.legByeRuns === 0))) return
 
     const current = innings[currentInningsIndex]
     if (
@@ -376,36 +339,15 @@ export const useMatchStore = create<AppStore>((set, get) => ({
       return
     if (current.status === 'complete') return
 
-    const effectiveRuns = runs ?? 0
-    let delivery: DeliveryKind = 'legal'
-    let batRuns = 0
-    let byeRuns = 0
-    let legByeRuns = 0
-    let wideExtraRuns = 0
-
-    if (type === 'wide') {
-      delivery = 'wide'
-      wideExtraRuns = effectiveRuns
-    } else if (type === 'noBall') {
-      delivery = 'noBall'
-      batRuns = effectiveRuns
-    } else if (type === 'bye') {
-      delivery = 'legal'
-      byeRuns = effectiveRuns
-    } else if (type === 'legBye') {
-      delivery = 'legal'
-      legByeRuns = effectiveRuns
-    }
-
     const ballEvent: InningsEvent = {
       id: generateId(),
       type: 'ball',
       bowlerId: current.currentBowlerId,
-      delivery,
-      batRuns,
-      byeRuns,
-      legByeRuns,
-      wideExtraRuns,
+      delivery: input.delivery,
+      batRuns: input.batRuns ?? 0,
+      byeRuns: input.byeRuns ?? 0,
+      legByeRuns: input.legByeRuns ?? 0,
+      wideExtraRuns: input.wideExtraRuns ?? 0,
     }
 
     const updatedCurrent: Innings = {

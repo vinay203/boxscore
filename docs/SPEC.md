@@ -36,13 +36,13 @@ overs, wicketsPerInnings, playersPerTeam, freeHitAfterNoBall, freeHitAfterWide (
 
 ## Build steps (do only the step you are asked to)
 [x] 1  Safety fixes: hooks crash, stale opener picker, never delete a match by accident, viewport zoom
-[ ] 2a engine (pure code + tests)
-[ ] 2b move the app onto the engine
+[x] 2a engine (pure code + tests)
+[x] 2b move the app onto the engine
        Fixes: undo restoring wrong batsmen, byes charged to bowler, dismissal text ("c ? b"),
        result text when Team 2 bats first, "1 wickets" grammar, "did not bat" bug, not-out/retired labels
-[ ] 3  Extras and dismissals: no-ball/wide with runs as ONE delivery, free hit, wicket on wide/no-ball,
-       run-out with runs completed, retired out / obstructing field / hit ball twice / timed out,
-       fielder names, overthrows, penalty runs, dead ball, short run, no-ball counts as ball faced
+[ ] 3a deliveries (no-ball/wide with runs as ONE delivery, free hit banner, block disallowed wickets on free hit)
+[ ] 3b wicket details (all dismissal types, fielder, run-out with runs, wicket on wide/no-ball, retired out, timed out)
+[ ] 3c overthrows, penalty runs, dead ball, short run
 [ ] 4  Undo + redo (any number of balls, across overs and innings), edit/delete any past ball,
        reopen a finished match, ball-by-ball log screen, confirm before destructive actions,
        edit overs/wickets/innings/toss mid-match, add/remove/substitute/rename players mid-match
@@ -58,4 +58,4 @@ overs, wicketsPerInnings, playersPerTeam, freeHitAfterNoBall, freeHitAfterWide (
 [ ] 11 Live info: current/required run rate, partnership, last 6 balls, projected score, commentary;
        match details (date, venue, umpire, wicketkeeper), better Player of the Match
 [ ] 12 Sharing: scorecard as image/PDF, WhatsApp text, live view link (needs a backend; decide first)
-[ ] 13 Polish: wake lock, dark mode, charts (Manhattan/worm), PWA icons (192/512 PNG), backup reminder 
+[ ] 13 Polish: wake lock, dark mode, charts (Manhattan/worm), PWA icons (192/512 PNG), backup reminder

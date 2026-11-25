@@ -1,9 +1,9 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import { deriveForInnings } from '../adapter'
-import { getInningsSummary, getPlayerOfTheMatch } from '../views'
+import { getInningsSummary, getMatchResultFromState, getPlayerOfTheMatch } from '../views'
 import { useMatchStore } from '../../store/matchStore'
 import { migrateLegacyInnings } from '../../store/persistence'
-import type { Ball, Innings, Match } from '../../types'
+import type { Ball, Innings, Match, Team } from '../../types'
 
 // Mock localStorage for node environment
 const mockStorage: Record<string, string> = {}
@@ -43,6 +43,124 @@ describe('Store & Engine Integration (Task 4)', () => {
     mockStorage['boxscore_current_match'] = ''
     delete mockStorage['boxscore_current_match']
     delete mockStorage['boxscore_match_history']
+  })
+
+  it('recordDelivery creates one no-ball event with bat runs and a free hit', () => {
+    setupTestMatch()
+    const store = useMatchStore.getState()
+    const match = store.match!
+    store.selectOpeningBatsmen(match.team1.players[0].id, match.team1.players[1].id)
+    store.selectBowler(match.team2.players[0].id)
+    store.recordDelivery({ delivery: 'noBall', batRuns: 4 })
+    const state = useMatchStore.getState()
+    const summary = getInningsSummary(match, state.innings, 0)
+    const derived = deriveForInnings(match, state.innings, 0)
+    expect(state.innings[0].events?.filter((event) => event.type === 'ball')).toHaveLength(1)
+    expect(summary.runs).toBe(5)
+    expect(summary.legalBalls).toBe(0)
+    expect(summary.batting[0]).toMatchObject({ runs: 4, balls: 1, fours: 1 })
+    expect(summary.bowling[0].runs).toBe(5)
+    expect(derived.isFreeHitNext).toBe(true)
+  })
+
+  it('getInningsSummary reports a four-bye as uncharged to the bowler and faced by the batter', () => {
+    setupTestMatch()
+    const store = useMatchStore.getState()
+    const match = store.match!
+    store.selectOpeningBatsmen(match.team1.players[0].id, match.team1.players[1].id)
+    store.selectBowler(match.team2.players[0].id)
+    store.recordDelivery({ delivery: 'legal', byeRuns: 4 })
+    const summary = getInningsSummary(match, useMatchStore.getState().innings, 0)
+    expect(summary.runs).toBe(4)
+    expect(summary.bowling[0].runs).toBe(0)
+    expect(summary.batting[0].balls).toBe(1)
+  })
+
+  it('undo restores score, strike, and free-hit state after no-ball plus four', () => {
+    setupTestMatch()
+    const store = useMatchStore.getState()
+    const match = store.match!
+    store.selectOpeningBatsmen(match.team1.players[0].id, match.team1.players[1].id)
+    store.selectBowler(match.team2.players[0].id)
+    const priorStrike = useMatchStore.getState().innings[0].currentBatsmanIds
+    store.recordDelivery({ delivery: 'noBall', batRuns: 4 })
+    store.undoLastBall()
+    const state = useMatchStore.getState()
+    expect(getInningsSummary(match, state.innings, 0).runs).toBe(0)
+    expect(state.innings[0].currentBatsmanIds).toEqual(priorStrike)
+    expect(deriveForInnings(match, state.innings, 0).isFreeHitNext).toBe(false)
+  })
+
+  it('recordDelivery accounts for wide extras, no-ball byes, and rejects invalid combinations', () => {
+    setupTestMatch()
+    const store = useMatchStore.getState()
+    const match = store.match!
+    store.selectOpeningBatsmen(match.team1.players[0].id, match.team1.players[1].id)
+    store.selectBowler(match.team2.players[0].id)
+    const beforeStrike = useMatchStore.getState().innings[0].currentBatsmanIds
+    store.recordDelivery({ delivery: 'wide', wideExtraRuns: 4 })
+    let state = useMatchStore.getState()
+    expect(getInningsSummary(match, state.innings, 0).runs).toBe(5)
+    expect(getInningsSummary(match, state.innings, 0).bowling[0].runs).toBe(5)
+    expect(getInningsSummary(match, state.innings, 0).batting[0].balls).toBe(0)
+    expect(state.innings[0].currentBatsmanIds).toEqual(beforeStrike)
+    store.recordDelivery({ delivery: 'wide', wideExtraRuns: 1 })
+    expect(useMatchStore.getState().innings[0].currentBatsmanIds).not.toEqual(beforeStrike)
+
+    setupTestMatch()
+    const byesStore = useMatchStore.getState()
+    const byesMatch = byesStore.match!
+    byesStore.selectOpeningBatsmen(byesMatch.team1.players[0].id, byesMatch.team1.players[1].id)
+    byesStore.selectBowler(byesMatch.team2.players[0].id)
+    byesStore.recordDelivery({ delivery: 'noBall', byeRuns: 2 })
+    state = useMatchStore.getState()
+    const byes = getInningsSummary(byesMatch, state.innings, 0)
+    expect(byes.runs).toBe(3)
+    expect(byes.bowling[0].runs).toBe(1)
+    expect(byes.batting[0].balls).toBe(1)
+
+    const count = state.innings[0].events?.length
+    byesStore.recordDelivery({ delivery: 'wide', batRuns: 1 })
+    byesStore.recordDelivery({ delivery: 'legal', byeRuns: 0 })
+    byesStore.recordDelivery({ delivery: 'legal', legByeRuns: 0 })
+    byesStore.recordDelivery({ delivery: 'legal', byeRuns: 1, legByeRuns: 1 })
+    byesStore.recordDelivery({ delivery: 'legal', batRuns: 1, byeRuns: 1 })
+    expect(useMatchStore.getState().innings[0].events).toHaveLength(count ?? 0)
+  })
+
+  it('getMatchResultFromState handles Team 2 batting first, margins, ties, and singular wording', () => {
+    setupTestMatch()
+    const match = useMatchStore.getState().match!
+    const team1 = match.team1
+    const team2 = match.team2
+    const mkInnings = (battingTeam: Team, bowlingTeam: Team, runs: number, wickets = 0): Innings => ({
+      battingTeamId: battingTeam.id,
+      bowlingTeamId: bowlingTeam.id,
+      events: [
+        { id: `open-${battingTeam.id}`, type: 'openers', strikerId: battingTeam.players[0].id, nonStrikerId: battingTeam.players[1].id },
+        ...Array.from({ length: wickets }, (_, i) => ({
+          id: `w-${battingTeam.id}-${i}`,
+          type: 'ball' as const,
+          bowlerId: bowlingTeam.players[0].id,
+          delivery: 'legal' as const,
+          batRuns: 0,
+          byeRuns: 0,
+          legByeRuns: 0,
+          wideExtraRuns: 0,
+          wicket: { kind: 'bowled' as const, outId: battingTeam.players[i === 0 ? 0 : i + 1].id, newBatterId: battingTeam.players[i + 2].id },
+        })),
+        ...Array.from({ length: runs }, (_, i) => ({ id: `ball-${battingTeam.id}-${i}`, type: 'ball' as const, bowlerId: bowlingTeam.players[0].id, delivery: 'legal' as const, batRuns: 1, byeRuns: 0, legByeRuns: 0, wideExtraRuns: 0 })),
+      ],
+      currentBatsmanIds: [battingTeam.players[0].id, battingTeam.players[1].id],
+      currentBowlerId: bowlingTeam.players[0].id,
+      status: 'complete',
+      pendingBowlerSelection: false,
+    })
+    const result = (first: number, chase: number, wickets = 0) => getMatchResultFromState(match, [mkInnings(team2, team1, first), mkInnings(team1, team2, chase, wickets)])
+    expect(result(5, 6).text).toContain('Team Alpha won by 3 wickets')
+    expect(result(6, 5).text).toBe('Team Beta won by 1 run')
+    expect(result(5, 5).text).toBe('Match tied')
+    expect(result(5, 6, 2).text).toContain('1 wicket')
   })
 
   it('keeps a non-striker on the scorecard and matches the legacy Player of the Match choice', () => {
@@ -353,5 +471,6 @@ describe('Store & Engine Integration (Task 4)', () => {
     const derived = deriveForInnings(mockMatch, [migrated], 0)
     expect(derived.score.runs).toBe(6)
     expect(derived.balls).toHaveLength(3)
+    expect(() => getInningsSummary(mockMatch, [migrated], 0)).not.toThrow()
   })
 })
