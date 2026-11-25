@@ -306,8 +306,9 @@ export function LiveScorerScreen() {
 
   if (matchStatus === 'innings_break') {
     const firstInnings = innings[0]
-    const score = getTotalRuns(firstInnings.balls)
-    const wkts = getWicketCount(firstInnings.balls)
+    const firstInningsSummary = getInningsSummary(match, innings, 0)
+    const score = firstInningsSummary.runs
+    const wkts = firstInningsSummary.wickets
 
     return (
       <PageTransition>

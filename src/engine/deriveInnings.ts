@@ -113,6 +113,7 @@ export function deriveInnings(
     const b = getOrCreateBatting(id)
     if (b.status !== 'out') {
       b.status = 'batting'
+      b.dismissalText = ''
     }
   }
 

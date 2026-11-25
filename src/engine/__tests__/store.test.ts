@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import { deriveForInnings } from '../adapter'
+import { getInningsSummary, getPlayerOfTheMatch } from '../views'
 import { useMatchStore } from '../../store/matchStore'
 import { migrateLegacyInnings } from '../../store/persistence'
 import type { Ball, Innings, Match } from '../../types'
@@ -42,6 +43,25 @@ describe('Store & Engine Integration (Task 4)', () => {
     mockStorage['boxscore_current_match'] = ''
     delete mockStorage['boxscore_current_match']
     delete mockStorage['boxscore_match_history']
+  })
+
+  it('keeps a non-striker on the scorecard and matches the legacy Player of the Match choice', () => {
+    setupTestMatch()
+    const store = useMatchStore.getState()
+    const match = store.match!
+    const [striker, nonStriker] = match.team1.players
+    store.selectOpeningBatsmen(striker.id, nonStriker.id)
+
+    const summary = getInningsSummary(match, useMatchStore.getState().innings, 0)
+    expect(summary.batting.find((player) => player.id === nonStriker.id)?.dismissalText).toBe('not out')
+    expect(summary.didNotBat).not.toContain(nonStriker.name)
+
+    // The pre-2C function selected the first batter on a tie at zero runs/wickets.
+    expect(getPlayerOfTheMatch(match, useMatchStore.getState().innings)).toEqual({
+      name: striker.name,
+      stat: '0 runs',
+      teamName: match.team1.name,
+    })
   })
 
   // 1. Select opening batsmen (players 3 and 4), score 1, score 0, score 4, then 3 undos.

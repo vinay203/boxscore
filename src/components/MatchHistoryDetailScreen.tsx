@@ -432,37 +432,6 @@ function BallByBallTimeline({
     </div>
   )
 }
-                } else if (b.runs === 0) {
-                  badgeClass = 'ball-dot dot'
-                  label = '•'
-                } else if (b.runs === 4) {
-                  badgeClass = 'ball-dot four'
-                  label = '4'
-                } else if (b.runs === 6) {
-                  badgeClass = 'ball-dot six'
-                  label = '6'
-                }
-
-                return (
-                  <div
-                    key={bIdx}
-                    className="flex flex-col items-center gap-0.5"
-                    title={`${batsman?.name ?? 'Batsman'} faced ${b.isWicket ? `Wicket (${b.wicketType || 'out'})` : `${b.runs} runs`}`}
-                  >
-                    <div className={badgeClass}>{label}</div>
-                    <span className="text-[9px] text-gray-400 truncate max-w-[40px]">
-                      {batsman?.name ? batsman.name.split(' ')[0] : ''}
-                    </span>
-                  </div>
-                )
-              })}
-            </div>
-          </Card>
-        )
-      })}
-    </div>
-  )
-}
 
 /**
  * Squads and Player Rosters View
@@ -495,7 +464,6 @@ function SquadsView({ match }: { match?: Match }) {
           ))}
         </div>
       </Card>
-
       {/* Team 2 Squad */}
       <Card className="p-4">
         <div className="flex items-center gap-2 mb-3 pb-2 border-b border-gray-100">

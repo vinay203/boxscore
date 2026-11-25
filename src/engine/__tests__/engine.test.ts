@@ -277,6 +277,44 @@ describe('Cricket Scoring Engine (pure TypeScript)', () => {
     expect(res.batting['b1'].runs).toBe(0)
     expect(res.batting['b1'].balls).toBe(2)
     expect(res.bowling['bw1'].runs).toBe(0)
+
+    const singleBye = deriveInnings([events[0], events[1]], ctx)
+    expect(singleBye.bowling['bw1'].runs).toBe(0)
+    expect(singleBye.batting['b1'].balls).toBe(1)
+  })
+
+  it('formats caught and stumped dismissals with optional fielders', () => {
+    const ctx = makeCtx()
+    const caught = (fielderId?: string) => deriveInnings([
+      { id: 'open', type: 'openers', strikerId: 'b1', nonStrikerId: 'b2' },
+      { id: 'out', type: 'ball', bowlerId: 'bw1', delivery: 'legal', batRuns: 0, byeRuns: 0, legByeRuns: 0, wideExtraRuns: 0,
+        wicket: { kind: 'caught', outId: 'b1', fielderId } },
+    ], ctx).batting.b1.dismissalText
+    const stumped = (fielderId?: string) => deriveInnings([
+      { id: 'open', type: 'openers', strikerId: 'b1', nonStrikerId: 'b2' },
+      { id: 'out', type: 'ball', bowlerId: 'bw1', delivery: 'legal', batRuns: 0, byeRuns: 0, legByeRuns: 0, wideExtraRuns: 0,
+        wicket: { kind: 'stumped', outId: 'b1', fielderId } },
+    ], ctx).batting.b1.dismissalText
+
+    expect(caught('b3')).toBe('c Batter Three b Kiran')
+    expect(caught()).toBe('caught b Kiran')
+    expect(stumped('b3')).toBe('st Batter Three b Kiran')
+    expect(stumped()).toBe('stumped b Kiran')
+  })
+
+  it('a returning retired-hurt batter keeps stats and finishes not out', () => {
+    const ctx = makeCtx()
+    const events: InningsEvent[] = [
+      { id: 'open', type: 'openers', strikerId: 'b2', nonStrikerId: 'b1' },
+      { id: 'run', type: 'ball', bowlerId: 'bw1', delivery: 'legal', batRuns: 3, byeRuns: 0, legByeRuns: 0, wideExtraRuns: 0 },
+      { id: 'retire', type: 'retiredHurt', batterId: 'b2', replacementId: 'b3' },
+      { id: 'return', type: 'openers', strikerId: 'b2', nonStrikerId: 'b1' },
+    ]
+    const result = deriveInnings(events, ctx)
+    expect(result.batting.b2.status).toBe('batting')
+    expect(result.batting.b2.dismissalText).toBe('not out')
+    expect(result.batting.b2.runs).toBe(3)
+    expect(result.batting.b2.balls).toBe(1)
   })
 
   // Test 6
