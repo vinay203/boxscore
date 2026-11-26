@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import {
   deriveForInnings,
+  allowedWicketKinds,
   formatScore,
   getInningsSummary,
   getMatchResultFromState,
@@ -44,6 +45,24 @@ interface SetupDraft {
   tossChoice: 'bat' | 'field'
 }
 
+interface DeliveryInput {
+  delivery: DeliveryKind
+  batRuns?: number
+  byeRuns?: number
+  legByeRuns?: number
+  wideExtraRuns?: number
+}
+
+function isValidDeliveryInput(input: DeliveryInput): boolean {
+  const has = (key: keyof DeliveryInput) => Object.prototype.hasOwnProperty.call(input, key)
+  if (input.delivery === 'wide' && (has('batRuns') || has('byeRuns') || has('legByeRuns'))) return false
+  if (has('byeRuns') && has('legByeRuns')) return false
+  if (has('batRuns') && (has('byeRuns') || has('legByeRuns'))) return false
+  if (input.delivery === 'legal' &&
+    ((has('byeRuns') && input.byeRuns === 0) || (has('legByeRuns') && input.legByeRuns === 0))) return false
+  return true
+}
+
 interface AppStore extends MatchState {
   screen: Screen
   setupStep: 1 | 2 | 3
@@ -81,6 +100,14 @@ interface AppStore extends MatchState {
     wicketType: WicketType,
     outBatsmanId: string,
     newBatsmanId: string,
+    opts?: {
+      fielderId?: string
+      delivery?: DeliveryKind
+      batRuns?: number
+      byeRuns?: number
+      legByeRuns?: number
+      wideExtraRuns?: number
+    },
   ) => void
   selectBowler: (bowlerId: string) => void
   cancelBowlerSelection: () => void
@@ -323,12 +350,7 @@ export const useMatchStore = create<AppStore>((set, get) => ({
     const { match, innings, currentInningsIndex } = state
     if (!match || state.matchStatus !== 'live') return
 
-    const has = (key: keyof typeof input) => Object.prototype.hasOwnProperty.call(input, key)
-    if (input.delivery === 'wide' && (has('batRuns') || has('byeRuns') || has('legByeRuns'))) return
-    if (has('byeRuns') && has('legByeRuns')) return
-    if (has('batRuns') && (has('byeRuns') || has('legByeRuns'))) return
-    if (input.delivery === 'legal' &&
-      ((has('byeRuns') && input.byeRuns === 0) || (has('legByeRuns') && input.legByeRuns === 0))) return
+    if (!isValidDeliveryInput(input)) return
 
     const current = innings[currentInningsIndex]
     if (
@@ -385,7 +407,7 @@ export const useMatchStore = create<AppStore>((set, get) => ({
     }
   },
 
-  recordWicket: (wicketType, outBatsmanId, newBatsmanId) => {
+  recordWicket: (wicketType, outBatsmanId, newBatsmanId, opts = {}) => {
     const state = get()
     const { match, innings, currentInningsIndex } = state
     if (!match || state.matchStatus !== 'live') return
@@ -399,19 +421,40 @@ export const useMatchStore = create<AppStore>((set, get) => ({
       return
     if (current.status === 'complete') return
 
+    const deliveryInput: DeliveryInput = {
+      delivery: opts.delivery ?? 'legal',
+      ...(opts.batRuns !== undefined ? { batRuns: opts.batRuns } : {}),
+      ...(opts.byeRuns !== undefined ? { byeRuns: opts.byeRuns } : {}),
+      ...(opts.legByeRuns !== undefined ? { legByeRuns: opts.legByeRuns } : {}),
+      ...(opts.wideExtraRuns !== undefined ? { wideExtraRuns: opts.wideExtraRuns } : {}),
+    }
+    if (!isValidDeliveryInput(deliveryInput)) return
+
+    const currentDerived = deriveForInnings(match, innings, currentInningsIndex)
+    if (!allowedWicketKinds(deliveryInput.delivery, currentDerived.isFreeHitNext).includes(wicketType)) return
+
+    const activeBatsmen = current.currentBatsmanIds
+    if (!activeBatsmen.includes(outBatsmanId)) return
+    if (['bowled', 'caught', 'lbw', 'stumped', 'hitWicket', 'hitBallTwice'].includes(wicketType) && outBatsmanId !== activeBatsmen[0]) return
+
+    if (['bowled', 'caught', 'lbw', 'stumped', 'hitWicket'].includes(wicketType) &&
+      ((deliveryInput.batRuns ?? 0) > 0 || (deliveryInput.byeRuns ?? 0) > 0 ||
+        (deliveryInput.legByeRuns ?? 0) > 0 || (deliveryInput.wideExtraRuns ?? 0) > 0)) return
+
     const ballEvent: InningsEvent = {
       id: generateId(),
       type: 'ball',
       bowlerId: current.currentBowlerId,
-      delivery: 'legal',
-      batRuns: 0,
-      byeRuns: 0,
-      legByeRuns: 0,
-      wideExtraRuns: 0,
+      delivery: deliveryInput.delivery,
+      batRuns: deliveryInput.batRuns ?? 0,
+      byeRuns: deliveryInput.byeRuns ?? 0,
+      legByeRuns: deliveryInput.legByeRuns ?? 0,
+      wideExtraRuns: deliveryInput.wideExtraRuns ?? 0,
       wicket: {
         kind: wicketType,
         outId: outBatsmanId,
         newBatterId: newBatsmanId || undefined,
+        fielderId: opts.fielderId,
       },
     }
 

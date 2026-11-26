@@ -45,14 +45,24 @@ const DISMISSAL_TYPES: { type: WicketKind; label: string }[] = [
 ]
 
 function BallDot({ ball }: { ball: DerivedBall }) {
-  if (ball.wicket) return <span className="ball-dot wicket">W</span>
-  if (ball.delivery === 'wide') return <span className="ball-dot wide">Wd</span>
-  if (ball.delivery === 'noBall') return <span className="ball-dot noball">Nb</span>
+  const ring = ball.isFreeHit ? ' free-hit' : ''
+  if (ball.delivery === 'wide') {
+    const label = `Wd${ball.wideExtraRuns || ''}${ball.wicket ? 'W' : ''}`
+    return <span className={`ball-dot ${ball.wicket ? 'wicket' : 'wide'}${ring} ${label.length > 2 ? 'ball-dot--long' : ''}`}>{label}</span>
+  }
+  if (ball.delivery === 'noBall') {
+    const noBallRuns = ball.byeRuns > 0 || ball.legByeRuns > 0
+      ? `B${ball.byeRuns + ball.legByeRuns}`
+      : ball.batRuns > 0 ? `${ball.batRuns}` : ''
+    const label = `Nb${noBallRuns}${ball.wicket ? 'W' : ''}`
+    return <span className={`ball-dot ${ball.wicket ? 'wicket' : 'noball'}${ring} ${label.length > 2 ? 'ball-dot--long' : ''}`}>{label}</span>
+  }
+  if (ball.wicket) return <span className={`ball-dot wicket${ring}`}>W</span>
   const runs = ball.batRuns + ball.byeRuns + ball.legByeRuns
-  if (runs === 0) return <span className="ball-dot dot">·</span>
+  if (runs === 0) return <span className={`ball-dot dot${ring}`}>·</span>
   return (
     <span
-      className={`ball-dot ${runs === 4 ? 'four' : runs === 6 ? 'six' : 'runs'}`}
+      className={`ball-dot ${runs === 4 ? 'four' : runs === 6 ? 'six' : 'runs'}${ring}`}
     >
       {ball.byeRuns > 0 || ball.legByeRuns > 0 ? `B${runs}` : runs}
     </span>
@@ -171,6 +181,8 @@ export function LiveScorerScreen() {
   const [wicketType, setWicketType] = useState<WicketType>('bowled')
   const [outBatsmanId, setOutBatsmanId] = useState('')
   const [newBatsmanId, setNewBatsmanId] = useState('')
+  const [fielderId, setFielderId] = useState('')
+  const [completedRuns, setCompletedRuns] = useState(0)
   const [selectedDelivery, setSelectedDelivery] = useState<'wide' | 'noBall' | null>(null)
   const [selectedBye, setSelectedBye] = useState<'bye' | 'legBye' | null>(null)
   const [confirmEndInnings, setConfirmEndInnings] = useState(false)
@@ -289,28 +301,51 @@ export function LiveScorerScreen() {
       : selectedDelivery === 'noBall'
         ? 'No Ball + runs off the bat'
         : selectedBye === 'bye' ? 'Bye' : selectedBye === 'legBye' ? 'Leg Bye' : ''
-  const allowedWickets = allowedWicketKinds('legal', !!derived?.isFreeHitNext)
-  const effectiveWicketType = allowedWickets.includes(wicketType) ? wicketType : allowedWickets[0]
+  const pendingDelivery = selectedDelivery ?? 'legal'
+  const allowedPendingWickets = allowedWicketKinds(pendingDelivery, !!derived?.isFreeHitNext)
+  const effectiveWicketType = allowedPendingWickets.includes(wicketType) ? wicketType : allowedPendingWickets[0]
+  const isStrikerOnlyWicket = ['bowled', 'caught', 'lbw', 'stumped', 'hitWicket', 'hitBallTwice'].includes(effectiveWicketType)
+  const wicketRuns = selectedBye && completedRuns === 0 ? 1 : completedRuns
+  const wicketModifierCaption = selectedDelivery === 'wide'
+    ? 'on a Wide'
+    : selectedDelivery === 'noBall' && selectedBye
+      ? `on a No Ball + ${selectedBye === 'bye' ? 'Byes' : 'Leg Byes'}`
+      : selectedDelivery === 'noBall'
+        ? 'on a No Ball'
+        : selectedBye === 'bye' ? 'on a Bye' : selectedBye === 'legBye' ? 'on a Leg Bye' : ''
 
   const openWicket = () => {
-    if (selectedDelivery || selectedBye) return
     if (!current?.currentBowlerId || current?.pendingBowlerSelection || current?.pendingBatsmanSelection) {
       changeBowlerRequest()
       return
     }
+    const allowed = allowedWicketKinds(pendingDelivery, !!derived?.isFreeHitNext)
+    if (!allowed.includes(wicketType)) setWicketType(allowed[0])
     const defaultOut = strikerId
     const defaultNew = remainingBatsmen[0]?.id ?? ''
     setOutBatsmanId(defaultOut)
     setNewBatsmanId(defaultNew)
-    const allowed = allowedWicketKinds('legal', !!derived?.isFreeHitNext)
-    if (!allowed.includes(wicketType as WicketKind)) setWicketType(allowed[0] as WicketType)
+    setFielderId('')
+    setCompletedRuns(selectedBye ? 1 : 0)
     setWicketOpen(true)
   }
 
   const confirmWicket = () => {
     const actualNew = newBatsmanId || remainingBatsmen[0]?.id || ''
+    const runOpts = effectiveWicketType !== 'runOut' ? {} : pendingDelivery === 'wide'
+      ? { wideExtraRuns: wicketRuns }
+      : selectedBye === 'bye'
+        ? { byeRuns: wicketRuns }
+        : selectedBye === 'legBye'
+          ? { legByeRuns: wicketRuns }
+          : { batRuns: wicketRuns }
     vibrate()
-    recordWicket(effectiveWicketType as WicketType, outBatsmanId || strikerId, actualNew)
+    recordWicket(effectiveWicketType, outBatsmanId || strikerId, actualNew, {
+      delivery: pendingDelivery,
+      ...runOpts,
+      fielderId: fielderId || undefined,
+    })
+    clearModifier()
     setWicketOpen(false)
   }
 
@@ -499,7 +534,7 @@ export function LiveScorerScreen() {
 
           {/* WICKET BUTTON - Prominent & Un-cut */}
           <div className="pt-1 pb-1">
-            <Button fullWidth variant="danger" onClick={openWicket} disabled={!!selectedModifier} title={selectedModifier ? 'Clear the extra first' : undefined}>
+            <Button fullWidth variant="danger" onClick={openWicket}>
               WICKET
             </Button>
           </div>
@@ -639,23 +674,48 @@ export function LiveScorerScreen() {
 
       {/* Wicket modal */}
       <BottomSheet open={wicketOpen} onClose={() => setWicketOpen(false)} title="Wicket">
+        {wicketModifierCaption && <p className="text-sm mb-3" style={{ color: '#777' }}>{wicketModifierCaption}</p>}
         <div className="grid grid-cols-2 gap-2 mb-4">
           {DISMISSAL_TYPES.map((d) => (
-            <button key={d.type} type="button" disabled={!!derived?.isFreeHitNext && !allowedWickets.includes(d.type)} onClick={() => setWicketType(d.type as WicketType)}
-              className={`toss-btn ${effectiveWicketType === d.type ? 'selected' : ''} ${derived?.isFreeHitNext && !allowedWickets.includes(d.type) ? 'disabled' : ''}`} style={{ padding: '10px', fontSize: '13px' }}>
+            <button key={d.type} type="button" disabled={!allowedPendingWickets.includes(d.type)} onClick={() => { setWicketType(d.type); setOutBatsmanId(strikerId) }}
+              className={`toss-btn ${effectiveWicketType === d.type ? 'selected' : ''} ${!allowedPendingWickets.includes(d.type) ? 'disabled' : ''}`} style={{ padding: '10px', fontSize: '13px' }}>
               {d.label}
             </button>
           ))}
         </div>
         <p className="text-sm font-medium mb-2" style={{ color: '#111' }}>Out batsman</p>
         <div className="flex gap-2 mb-4">
-          {[strikerId, nonStrikerId].map((id) => (
+          {(isStrikerOnlyWicket ? [strikerId] : [strikerId, nonStrikerId]).map((id) => (
             <button key={id} type="button" onClick={() => setOutBatsmanId(id)}
               className={`toss-btn ${outBatsmanId === id ? 'selected' : ''}`} style={{ padding: '10px', fontSize: '13px' }}>
               {getPlayerById(battingTeam, id)?.name}
             </button>
           ))}
         </div>
+        {(['caught', 'stumped', 'runOut'].includes(effectiveWicketType)) && (
+          <>
+            <p className="text-sm font-medium mb-2" style={{ color: '#111' }}>{effectiveWicketType === 'stumped' ? 'Wicketkeeper' : 'Fielder'}</p>
+            <div className="flex flex-wrap gap-2 mb-4">
+              <button type="button" onClick={() => setFielderId('')} className={`toss-btn ${!fielderId ? 'selected' : ''}`} style={{ padding: '8px 12px', fontSize: '12px' }}>Skip</button>
+              {bowlingTeam.players.filter((player) => effectiveWicketType !== 'caught' || player.id !== current.currentBowlerId).map((player) => (
+                <button key={player.id} type="button" onClick={() => setFielderId(player.id)} className={`toss-btn ${fielderId === player.id ? 'selected' : ''}`} style={{ padding: '8px 12px', fontSize: '12px' }}>{player.name}</button>
+              ))}
+              {effectiveWicketType === 'caught' && current.currentBowlerId && (
+                <button type="button" onClick={() => setFielderId(current.currentBowlerId)} className={`toss-btn ${fielderId === current.currentBowlerId ? 'selected' : ''}`} style={{ padding: '8px 12px', fontSize: '12px' }}>{getPlayerById(bowlingTeam, current.currentBowlerId)?.name}</button>
+              )}
+            </div>
+          </>
+        )}
+        {effectiveWicketType === 'runOut' && (
+          <>
+            <p className="text-sm font-medium mb-2" style={{ color: '#111' }}>Runs completed</p>
+            <div className="flex gap-2 mb-4">
+              {(selectedBye ? [1, 2, 3] : [0, 1, 2, 3]).map((runs) => (
+                <button key={runs} type="button" onClick={() => setCompletedRuns(runs)} className={`toss-btn ${wicketRuns === runs ? 'selected' : ''}`} style={{ padding: '8px 12px', fontSize: '12px' }}>{runs}</button>
+              ))}
+            </div>
+          </>
+        )}
         {remainingBatsmen.length > 0 && (
           <>
             <p className="text-sm font-medium mb-2" style={{ color: '#111' }}>New batsman</p>

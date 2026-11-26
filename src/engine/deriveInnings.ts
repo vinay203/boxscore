@@ -148,6 +148,7 @@ export function deriveInnings(
       case 'bowled':
         return `b ${bowlerName}`
       case 'caught':
+        if (fielderId && fielderId === bowlerId) return `c & b ${bowlerName}`
         return fielderName ? `c ${fielderName} b ${bowlerName}` : `caught b ${bowlerName}`
       case 'lbw':
         return `lbw b ${bowlerName}`

@@ -40,7 +40,7 @@ overs, wicketsPerInnings, playersPerTeam, freeHitAfterNoBall, freeHitAfterWide (
 [x] 2b move the app onto the engine
        Fixes: undo restoring wrong batsmen, byes charged to bowler, dismissal text ("c ? b"),
        result text when Team 2 bats first, "1 wickets" grammar, "did not bat" bug, not-out/retired labels
-[ ] 3a deliveries (no-ball/wide with runs as ONE delivery, free hit banner, block disallowed wickets on free hit)
+[x] 3a deliveries (no-ball/wide with runs as ONE delivery, free hit banner, block disallowed wickets on free hit)
 [ ] 3b wicket details (all dismissal types, fielder, run-out with runs, wicket on wide/no-ball, retired out, timed out)
 [ ] 3c overthrows, penalty runs, dead ball, short run
 [ ] 4  Undo + redo (any number of balls, across overs and innings), edit/delete any past ball,

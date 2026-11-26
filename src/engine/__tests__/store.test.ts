@@ -3,7 +3,7 @@ import { deriveForInnings } from '../adapter'
 import { getInningsSummary, getMatchResultFromState, getPlayerOfTheMatch } from '../views'
 import { useMatchStore } from '../../store/matchStore'
 import { migrateLegacyInnings } from '../../store/persistence'
-import type { Ball, Innings, Match, Team } from '../../types'
+import type { Ball, Innings, Match, Team, WicketType } from '../../types'
 
 // Mock localStorage for node environment
 const mockStorage: Record<string, string> = {}
@@ -89,6 +89,100 @@ describe('Store & Engine Integration (Task 4)', () => {
     expect(getInningsSummary(match, state.innings, 0).runs).toBe(0)
     expect(state.innings[0].currentBatsmanIds).toEqual(priorStrike)
     expect(deriveForInnings(match, state.innings, 0).isFreeHitNext).toBe(false)
+  })
+
+  it('records a no-ball run-out with one completed run as one legal-ball-free event', () => {
+    setupTestMatch()
+    const store = useMatchStore.getState()
+    const match = store.match!
+    const [striker, nonStriker, incoming] = match.team1.players
+    const bowler = match.team2.players[0]
+    store.selectOpeningBatsmen(striker.id, nonStriker.id)
+    store.selectBowler(bowler.id)
+    store.recordWicket('runOut', striker.id, incoming.id, { delivery: 'noBall', batRuns: 1 })
+    const state = useMatchStore.getState()
+    const summary = getInningsSummary(match, state.innings, 0)
+    expect(state.innings[0].events?.filter((event) => event.type === 'ball')).toHaveLength(1)
+    expect(summary.runs).toBe(2)
+    expect(summary.legalBalls).toBe(0)
+    expect(summary.bowling[0].runs).toBe(2)
+    expect(summary.bowling[0].wickets).toBe(0)
+    expect(state.innings[0].currentBatsmanIds).toEqual([nonStriker.id, incoming.id])
+  })
+
+  it('records a stumping on a plain wide with keeper credit and fielder text', () => {
+    setupTestMatch()
+    const store = useMatchStore.getState()
+    store.updateLiveMatchNames('Team Alpha', ['A1', 'A2', 'A3', 'A4'], 'Team Beta', ['Kiran', 'Ravi', 'B3', 'B4'])
+    const match = useMatchStore.getState().match!
+    const [striker, nonStriker, incoming] = match.team1.players
+    const [bowler, keeper] = match.team2.players
+    useMatchStore.getState().selectOpeningBatsmen(striker.id, nonStriker.id)
+    useMatchStore.getState().selectBowler(bowler.id)
+    useMatchStore.getState().recordWicket('stumped', striker.id, incoming.id, { delivery: 'wide', wideExtraRuns: 0, fielderId: keeper.id })
+    const state = useMatchStore.getState()
+    const summary = getInningsSummary(match, state.innings, 0)
+    expect(summary.runs).toBe(1)
+    expect(summary.legalBalls).toBe(0)
+    expect(summary.bowling[0].wickets).toBe(1)
+    expect(summary.batting.find((batter) => batter.id === striker.id)?.dismissalText).toBe('st Ravi b Kiran')
+  })
+
+  it('rejects bowled wickets on no-ball and free hit but accepts run-out on free hit', () => {
+    setupTestMatch()
+    const store = useMatchStore.getState()
+    const match = store.match!
+    const [striker, nonStriker, incoming] = match.team1.players
+    store.selectOpeningBatsmen(striker.id, nonStriker.id)
+    store.selectBowler(match.team2.players[0].id)
+    store.recordWicket('bowled', striker.id, incoming.id, { delivery: 'noBall' })
+    expect(useMatchStore.getState().innings[0].events?.filter((event) => event.type === 'ball')).toHaveLength(0)
+
+    store.recordDelivery({ delivery: 'noBall', batRuns: 0 })
+    const afterNoBall = useMatchStore.getState().innings[0].events?.length
+    store.recordWicket('bowled', striker.id, incoming.id)
+    expect(useMatchStore.getState().innings[0].events).toHaveLength(afterNoBall ?? 0)
+    store.recordWicket('runOut', striker.id, incoming.id)
+    expect(useMatchStore.getState().innings[0].events?.filter((event) => event.type === 'ball')).toHaveLength(2)
+  })
+
+  it('records two completed legal run-out runs without crediting the bowler or changing striker ends', () => {
+    setupTestMatch()
+    const store = useMatchStore.getState()
+    const match = store.match!
+    const [striker, nonStriker, incoming] = match.team1.players
+    store.selectOpeningBatsmen(striker.id, nonStriker.id)
+    store.selectBowler(match.team2.players[0].id)
+    store.recordWicket('runOut', striker.id, incoming.id, { delivery: 'legal', batRuns: 2 })
+    const state = useMatchStore.getState()
+    const summary = getInningsSummary(match, state.innings, 0)
+    expect(summary.runs).toBe(2)
+    expect(summary.bowling[0].wickets).toBe(0)
+    expect(state.innings[0].currentBatsmanIds).toEqual([incoming.id, nonStriker.id])
+  })
+
+  it('rejects invalid wicket combinations and restores innings state when undoing a wicket extra', () => {
+    setupTestMatch()
+    const store = useMatchStore.getState()
+    const match = store.match!
+    const [striker, nonStriker, incoming] = match.team1.players
+    store.selectOpeningBatsmen(striker.id, nonStriker.id)
+    store.selectBowler(match.team2.players[0].id)
+    store.recordWicket('caught', striker.id, incoming.id, { batRuns: 1 })
+    store.recordWicket('runOut', incoming.id, incoming.id)
+    store.recordWicket('bowled', nonStriker.id, incoming.id)
+    store.recordWicket('unknown' as WicketType, striker.id, incoming.id)
+    expect(useMatchStore.getState().innings[0].events?.filter((event) => event.type === 'ball')).toHaveLength(0)
+
+    const beforeStrike = useMatchStore.getState().innings[0].currentBatsmanIds
+    store.recordWicket('runOut', striker.id, incoming.id, { delivery: 'noBall', batRuns: 1 })
+    const wicketState = useMatchStore.getState()
+    expect(getInningsSummary(match, wicketState.innings, 0).runs).toBe(2)
+    store.undoLastBall()
+    const undone = useMatchStore.getState()
+    expect(getInningsSummary(match, undone.innings, 0).runs).toBe(0)
+    expect(undone.innings[0].currentBatsmanIds).toEqual(beforeStrike)
+    expect(deriveForInnings(match, undone.innings, 0).isFreeHitNext).toBe(false)
   })
 
   it('recordDelivery accounts for wide extras, no-ball byes, and rejects invalid combinations', () => {

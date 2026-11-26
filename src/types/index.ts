@@ -1,14 +1,8 @@
-import type { InningsEvent } from '../engine/types'
+import type { InningsEvent, WicketKind } from '../engine/types'
 
 export type ExtraType = 'wide' | 'noBall' | 'bye' | 'legBye'
 
-export type WicketType =
-  | 'bowled'
-  | 'caught'
-  | 'runOut'
-  | 'lbw'
-  | 'stumped'
-  | 'hitWicket'
+export type WicketType = WicketKind
 
 export type MatchStatus =
   | 'setup'

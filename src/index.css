@@ -340,6 +340,8 @@ button:disabled { cursor: not-allowed !important; opacity: 0.35; }
 .ball-dot.wide { background: #fff; color: #AAA; border: 1px dashed #D0D0D0; font-size: 10px; }
 .ball-dot.noball { background: #fff; color: #AAA; border: 1px dashed #D0D0D0; font-size: 10px; }
 .ball-dot.wicket { background: #E53E3E; color: #fff; font-weight: 800; }
+.ball-dot.free-hit { outline: 1px solid #111; outline-offset: 1px; }
+.ball-dot--long { flex: 0 0 auto; width: auto; min-width: 30px; padding: 0 7px; border-radius: 15px; }
 
 /* ===== STATS ===== */
 .stats-card { padding: 16px 20px !important; }

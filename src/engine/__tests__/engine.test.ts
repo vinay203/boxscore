@@ -308,6 +308,7 @@ describe('Cricket Scoring Engine (pure TypeScript)', () => {
     ], ctx).batting.b1.dismissalText
 
     expect(caught('b3')).toBe('c Batter Three b Kiran')
+    expect(caught('bw1')).toBe('c & b Kiran')
     expect(caught()).toBe('caught b Kiran')
     expect(stumped('b3')).toBe('st Batter Three b Kiran')
     expect(stumped()).toBe('stumped b Kiran')
