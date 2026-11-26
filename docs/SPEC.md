@@ -43,7 +43,7 @@ overs, wicketsPerInnings, playersPerTeam, freeHitAfterNoBall, freeHitAfterWide (
 [x] 3a deliveries (no-ball/wide with runs as ONE delivery, free hit banner, block disallowed wickets on free hit)
 [x] 3b wicket details (all dismissal types, fielder, run-out with runs, wicket on wide/no-ball, retired out, timed out)
 [ ] 3c overthrows, penalty runs, dead ball, short run
-[ ] 4a redo + ball log + delete any past ball
+[x] 4a redo + ball log + delete any past ball
 [ ] 4b edit or insert any past ball
 [ ] 4c change overs/wickets/innings/players mid-match (add, remove, substitute, rename)
 [ ] 4d reopen a finished match, undo across innings, confirmations

@@ -7,6 +7,7 @@ import { deriveInnings } from './deriveInnings'
 import {
   defaultRules,
   type DerivedInnings,
+  type InningsContext,
   type MatchRules,
 } from './types'
 
@@ -24,6 +25,14 @@ export function deriveForInnings(
   allInnings: Innings[],
   inningsIndex: number,
 ): DerivedInnings {
+  return deriveInnings(allInnings[inningsIndex]?.events ?? [], getInningsContext(match, allInnings, inningsIndex))
+}
+
+export function getInningsContext(
+  match: Match,
+  allInnings: Innings[],
+  inningsIndex: number,
+): InningsContext {
   const rules = rulesFromMatch(match)
   const currentInnings = allInnings[inningsIndex]
   const battingTeam =
@@ -44,13 +53,12 @@ export function deriveForInnings(
     target = d0.score.runs + 1
   }
 
-  const events = currentInnings?.events ?? []
-  return deriveInnings(events, {
+  return {
     rules,
     battingPlayerIds,
     players,
     target,
-  })
+  }
 }
 
 export function syncInnings(

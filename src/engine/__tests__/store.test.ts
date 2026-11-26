@@ -449,6 +449,42 @@ describe('Store & Engine Integration (Task 4)', () => {
     })
   })
 
+  it('edits and inserts balls by replacing the event log and validates edited delivery context', () => {
+    setupTestMatch()
+    let store = useMatchStore.getState()
+    const match = store.match!
+    const [striker, nonStriker] = match.team1.players
+    store.selectOpeningBatsmen(striker.id, nonStriker.id)
+    store.selectBowler(match.team2.players[0].id)
+    store.recordDelivery({ delivery: 'legal', batRuns: 4 })
+    const ball = (useMatchStore.getState().innings[0]!.events ?? []).find((event) => event.type === 'ball')
+    expect(ball?.type).toBe('ball')
+    if (!ball || ball.type !== 'ball') throw new Error('Expected recorded ball')
+
+    expect(useMatchStore.getState().editEvent(ball.id, { ...ball, batRuns: 2 }).ok).toBe(true)
+    expect(getInningsSummary(match, useMatchStore.getState().innings, 0).runs).toBe(2)
+    expect(useMatchStore.getState().insertEvent(ball.id, {
+      bowlerId: ball.bowlerId, delivery: 'legal', batRuns: 1, byeRuns: 0, legByeRuns: 0, wideExtraRuns: 0,
+    }).ok).toBe(true)
+    expect(getInningsSummary(match, useMatchStore.getState().innings, 0).runs).toBe(3)
+    store = useMatchStore.getState()
+    const invalid = store.editEvent(ball.id, { ...ball, delivery: 'wide', batRuns: 2 })
+    expect(invalid.ok).toBe(false)
+    expect(invalid.error).toContain('wide')
+  })
+
+  it('edits the opener event without changing its ID and rejects duplicate openers', () => {
+    setupTestMatch()
+    const store = useMatchStore.getState()
+    const match = store.match!
+    const [first, second, third] = match.team1.players
+    store.selectOpeningBatsmen(first.id, second.id)
+    const original = useMatchStore.getState().innings[0]!.events![0]!
+    expect(useMatchStore.getState().editOpeners(third.id, second.id).ok).toBe(true)
+    expect(useMatchStore.getState().innings[0]!.events![0]).toEqual({ ...original, strikerId: third.id })
+    expect(useMatchStore.getState().editOpeners(third.id, third.id).ok).toBe(false)
+  })
+
   // 1. Select opening batsmen (players 3 and 4), score 1, score 0, score 4, then 3 undos.
   it('1. Select opening batsmen (players 3 and 4), score 1, 0, 4, then 3 undos restores batsmen after each undo', () => {
     setupTestMatch(2, 3)

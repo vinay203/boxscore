@@ -334,6 +334,17 @@ describe('Cricket Scoring Engine (pure TypeScript)', () => {
     expect(result.batting.b2.balls).toBe(1)
   })
 
+  it('does not allow an out batter to return through a later openers event', () => {
+    const result = deriveInnings([
+      { id: 'open', type: 'openers', strikerId: 'b1', nonStrikerId: 'b2' },
+      { id: 'out', type: 'ball', bowlerId: 'bw1', delivery: 'legal', batRuns: 0, byeRuns: 0, legByeRuns: 0, wideExtraRuns: 0,
+        wicket: { kind: 'bowled', outId: 'b1', newBatterId: 'b3' } },
+      { id: 'return', type: 'openers', strikerId: 'b1', nonStrikerId: 'b2' },
+    ], makeCtx())
+    expect(result.batting.b1.status).toBe('out')
+    expect(result.errors).toContain('A dismissed batter cannot return to the crease')
+  })
+
   // Test 6
   it('6. No-ball + 2 byes: team 3 runs, bowler charged 1, batter faced the ball', () => {
     const ctx = makeCtx()

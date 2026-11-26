@@ -212,6 +212,14 @@ export function deriveInnings(
     }
 
     if (ev.type === 'openers') {
+      if (ev.strikerId === ev.nonStrikerId) {
+        errors.push(`Opening batters must be different players`)
+        continue
+      }
+      if (batting[ev.strikerId]?.status === 'out' || batting[ev.nonStrikerId]?.status === 'out') {
+        errors.push('A dismissed batter cannot return to the crease')
+        continue
+      }
       strikerId = ev.strikerId
       nonStrikerId = ev.nonStrikerId
       setBattingStatus(strikerId)

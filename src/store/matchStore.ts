@@ -1,13 +1,14 @@
 import { create } from 'zustand'
 import {
   deriveForInnings,
-  allowedWicketKinds,
+  validateBallInput,
   formatScore,
   getInningsSummary,
   getMatchResultFromState,
   getPlayerOfTheMatch,
   syncInnings,
 } from '../engine'
+import type { BallInput, BallValidationContext } from '../engine/validation'
 import type { DeliveryKind, InningsEvent } from '../engine/types'
 import type {
   CompletedMatchSummary,
@@ -45,22 +46,24 @@ interface SetupDraft {
   tossChoice: 'bat' | 'field'
 }
 
-interface DeliveryInput {
-  delivery: DeliveryKind
-  batRuns?: number
-  byeRuns?: number
-  legByeRuns?: number
-  wideExtraRuns?: number
+type DeliveryInput = BallInput
+type BallEvent = Extract<InningsEvent, { type: 'ball' }>
+type NewBallEvent = Omit<BallEvent, 'id' | 'type'>
+
+interface EventActionResult {
+  ok: boolean
+  error?: string
 }
 
-function isValidDeliveryInput(input: DeliveryInput): boolean {
-  const has = (key: keyof DeliveryInput) => Object.prototype.hasOwnProperty.call(input, key)
-  if (input.delivery === 'wide' && (has('batRuns') || has('byeRuns') || has('legByeRuns'))) return false
-  if (has('byeRuns') && has('legByeRuns')) return false
-  if (has('batRuns') && (has('byeRuns') || has('legByeRuns'))) return false
-  if (input.delivery === 'legal' &&
-    ((has('byeRuns') && input.byeRuns === 0) || (has('legByeRuns') && input.legByeRuns === 0))) return false
-  return true
+function sparseBallInput(ball: Extract<InningsEvent, { type: 'ball' }>): BallInput {
+  return {
+    delivery: ball.delivery,
+    ...(ball.batRuns !== 0 ? { batRuns: ball.batRuns } : {}),
+    ...(ball.byeRuns !== 0 ? { byeRuns: ball.byeRuns } : {}),
+    ...(ball.legByeRuns !== 0 ? { legByeRuns: ball.legByeRuns } : {}),
+    ...(ball.wideExtraRuns !== 0 ? { wideExtraRuns: ball.wideExtraRuns } : {}),
+    ...(ball.wicket ? { wicket: ball.wicket } : {}),
+  }
 }
 
 interface AppStore extends MatchState {
@@ -124,6 +127,9 @@ interface AppStore extends MatchState {
   undoLastBall: () => void
   redoLastBall: () => void
   deleteEvent: (eventId: string) => { ok: boolean; error?: string }
+  editEvent: (eventId: string, replacement: BallEvent) => EventActionResult
+  insertEvent: (afterEventId: string | null, ball: NewBallEvent) => EventActionResult
+  editOpeners: (strikerId: string, nonStrikerId: string) => EventActionResult
   startSecondInnings: () => void
   finishMatch: () => void
   swapBatsmen: () => void
@@ -185,7 +191,7 @@ function recomputeEventChange(
   currentInningsIndex: number,
   events: InningsEvent[],
   restoreBowlerFromLastBall = true,
-): { innings: Innings[]; matchStatus: MatchStatus; complete: boolean } {
+): { innings: Innings[]; matchStatus: MatchStatus } {
   const current = innings[currentInningsIndex]
   const interim: Innings = { ...current, events, status: 'live' }
   const synced = syncInnings(interim, match, innings, currentInningsIndex)
@@ -206,7 +212,44 @@ function recomputeEventChange(
     matchStatus: derived.isComplete
       ? currentInningsIndex === 0 ? 'innings_break' : 'complete'
       : 'live',
-    complete: derived.isComplete,
+  }
+}
+
+function firstNewEngineError(
+  match: Match,
+  innings: Innings[],
+  currentInningsIndex: number,
+  candidateEvents: InningsEvent[],
+): string | undefined {
+  const currentErrors = deriveForInnings(match, innings, currentInningsIndex).errors
+  const candidateInnings = [...innings]
+  candidateInnings[currentInningsIndex] = {
+    ...candidateInnings[currentInningsIndex],
+    events: candidateEvents,
+  }
+  const candidateErrors = deriveForInnings(match, candidateInnings, currentInningsIndex).errors
+  if (candidateErrors.length <= currentErrors.length) return undefined
+  return candidateErrors.find((message, index) => !currentErrors.includes(message) || index >= currentErrors.length)
+    ?? candidateErrors[currentErrors.length]
+    ?? 'This edit makes the innings invalid'
+}
+
+function getBallContextBefore(
+  match: Match,
+  innings: Innings[],
+  currentInningsIndex: number,
+  eventsBefore: InningsEvent[],
+): BallValidationContext {
+  const prefixInnings = [...innings]
+  prefixInnings[currentInningsIndex] = {
+    ...prefixInnings[currentInningsIndex],
+    events: eventsBefore,
+  }
+  const derived = deriveForInnings(match, prefixInnings, currentInningsIndex)
+  return {
+    strikerId: derived.strikerId,
+    nonStrikerId: derived.nonStrikerId,
+    isFreeHit: derived.isFreeHitNext,
   }
 }
 
@@ -388,8 +431,6 @@ export const useMatchStore = create<AppStore>((set, get) => ({
     const { match, innings, currentInningsIndex } = state
     if (!match || state.matchStatus !== 'live') return
 
-    if (!isValidDeliveryInput(input)) return
-
     const current = innings[currentInningsIndex]
     if (
       current.pendingBowlerSelection ||
@@ -398,6 +439,14 @@ export const useMatchStore = create<AppStore>((set, get) => ({
     )
       return
     if (current.status === 'complete') return
+
+    const before = deriveForInnings(match, innings, currentInningsIndex)
+    const validationError = validateBallInput(input, {
+      strikerId: before.strikerId,
+      nonStrikerId: before.nonStrikerId,
+      isFreeHit: before.isFreeHitNext,
+    })
+    if (validationError) return
 
     const ballEvent: InningsEvent = {
       id: generateId(),
@@ -466,18 +515,19 @@ export const useMatchStore = create<AppStore>((set, get) => ({
       ...(opts.legByeRuns !== undefined ? { legByeRuns: opts.legByeRuns } : {}),
       ...(opts.wideExtraRuns !== undefined ? { wideExtraRuns: opts.wideExtraRuns } : {}),
     }
-    if (!isValidDeliveryInput(deliveryInput)) return
-
     const currentDerived = deriveForInnings(match, innings, currentInningsIndex)
-    if (!allowedWicketKinds(deliveryInput.delivery, currentDerived.isFreeHitNext).includes(wicketType)) return
-
-    const activeBatsmen = current.currentBatsmanIds
-    if (!activeBatsmen.includes(outBatsmanId)) return
-    if (['bowled', 'caught', 'lbw', 'stumped', 'hitWicket', 'hitBallTwice'].includes(wicketType) && outBatsmanId !== activeBatsmen[0]) return
-
-    if (['bowled', 'caught', 'lbw', 'stumped', 'hitWicket'].includes(wicketType) &&
-      ((deliveryInput.batRuns ?? 0) > 0 || (deliveryInput.byeRuns ?? 0) > 0 ||
-        (deliveryInput.legByeRuns ?? 0) > 0 || (deliveryInput.wideExtraRuns ?? 0) > 0)) return
+    const wicket = {
+      kind: wicketType,
+      outId: outBatsmanId,
+      newBatterId: newBatsmanId || undefined,
+      fielderId: opts.fielderId,
+    }
+    const validationError = validateBallInput({ ...deliveryInput, wicket }, {
+      strikerId: currentDerived.strikerId,
+      nonStrikerId: currentDerived.nonStrikerId,
+      isFreeHit: currentDerived.isFreeHitNext,
+    })
+    if (validationError) return
 
     const ballEvent: InningsEvent = {
       id: generateId(),
@@ -488,12 +538,7 @@ export const useMatchStore = create<AppStore>((set, get) => ({
       byeRuns: deliveryInput.byeRuns ?? 0,
       legByeRuns: deliveryInput.legByeRuns ?? 0,
       wideExtraRuns: deliveryInput.wideExtraRuns ?? 0,
-      wicket: {
-        kind: wicketType,
-        outId: outBatsmanId,
-        newBatterId: newBatsmanId || undefined,
-        fielderId: opts.fielderId,
-      },
+      wicket,
     }
 
     const updatedCurrent: Innings = {
@@ -833,6 +878,82 @@ export const useMatchStore = create<AppStore>((set, get) => ({
       currentInningsIndex,
       matchStatus: recomputed.matchStatus,
     }
+    persist(newState)
+    set({ ...newState, redoStack: [] })
+    if (recomputed.matchStatus === 'complete') get().finishMatch()
+    return { ok: true }
+  },
+
+  editEvent: (eventId, replacement) => {
+    const { match, innings, currentInningsIndex } = get()
+    if (!match) return { ok: false, error: 'No active match' }
+    const current = innings[currentInningsIndex]
+    const events = current.events ?? []
+    const index = events.findIndex((event) => event.id === eventId)
+    if (index < 0 || events[index].type !== 'ball') {
+      return { ok: false, error: 'Ball not found in this innings' }
+    }
+    if (replacement.id !== eventId) return { ok: false, error: 'Edited ball must keep its event ID' }
+    const context = getBallContextBefore(match, innings, currentInningsIndex, events.slice(0, index))
+    const validationError = validateBallInput(sparseBallInput(replacement), context)
+    if (validationError) return { ok: false, error: validationError }
+    const updatedEvents = [...events]
+    updatedEvents[index] = replacement
+    const engineError = firstNewEngineError(match, innings, currentInningsIndex, updatedEvents)
+    if (engineError) return { ok: false, error: engineError }
+    const recomputed = recomputeEventChange(match, innings, currentInningsIndex, updatedEvents)
+    const newState: MatchState = { match, innings: recomputed.innings, currentInningsIndex, matchStatus: recomputed.matchStatus }
+    persist(newState)
+    set({ ...newState, redoStack: [] })
+    if (recomputed.matchStatus === 'complete') get().finishMatch()
+    return { ok: true }
+  },
+
+  insertEvent: (afterEventId, ball) => {
+    const { match, innings, currentInningsIndex } = get()
+    if (!match) return { ok: false, error: 'No active match' }
+    const current = innings[currentInningsIndex]
+    const events = current.events ?? []
+    const openerIndex = events.findIndex((event) => event.type === 'openers')
+    const anchorIndex = afterEventId === null
+      ? openerIndex
+      : events.findIndex((event) => event.id === afterEventId)
+    if (anchorIndex < 0) return { ok: false, error: 'Insertion point not found in this innings' }
+    const index = anchorIndex + 1
+    const inserted: BallEvent = { ...ball, type: 'ball', id: generateId() }
+    const context = getBallContextBefore(match, innings, currentInningsIndex, events.slice(0, index))
+    const validationError = validateBallInput(sparseBallInput(inserted), context)
+    if (validationError) return { ok: false, error: validationError }
+    const updatedEvents = [...events]
+    updatedEvents.splice(index, 0, inserted)
+    const engineError = firstNewEngineError(match, innings, currentInningsIndex, updatedEvents)
+    if (engineError) return { ok: false, error: engineError }
+    const recomputed = recomputeEventChange(match, innings, currentInningsIndex, updatedEvents)
+    const newState: MatchState = { match, innings: recomputed.innings, currentInningsIndex, matchStatus: recomputed.matchStatus }
+    persist(newState)
+    set({ ...newState, redoStack: [] })
+    if (recomputed.matchStatus === 'complete') get().finishMatch()
+    return { ok: true }
+  },
+
+  editOpeners: (strikerId, nonStrikerId) => {
+    const { match, innings, currentInningsIndex } = get()
+    if (!match) return { ok: false, error: 'No active match' }
+    if (!strikerId || !nonStrikerId || strikerId === nonStrikerId) {
+      return { ok: false, error: 'Choose two different opening batters' }
+    }
+    const current = innings[currentInningsIndex]
+    const events = current.events ?? []
+    const index = events.findIndex((event) => event.type === 'openers')
+    if (index < 0) return { ok: false, error: 'Opening batters have not been selected' }
+    const updatedEvents = [...events]
+    const opener = events[index]
+    if (opener.type !== 'openers') return { ok: false, error: 'Opening batters have not been selected' }
+    updatedEvents[index] = { ...opener, strikerId, nonStrikerId }
+    const engineError = firstNewEngineError(match, innings, currentInningsIndex, updatedEvents)
+    if (engineError) return { ok: false, error: engineError }
+    const recomputed = recomputeEventChange(match, innings, currentInningsIndex, updatedEvents)
+    const newState: MatchState = { match, innings: recomputed.innings, currentInningsIndex, matchStatus: recomputed.matchStatus }
     persist(newState)
     set({ ...newState, redoStack: [] })
     if (recomputed.matchStatus === 'complete') get().finishMatch()

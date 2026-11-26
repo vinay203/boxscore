@@ -14,12 +14,15 @@ import { Card } from './ui/Card'
 import { Input } from './ui/Input'
 import { PageTransition } from './ui/PageTransition'
 import { ScorecardScreen } from './ScorecardScreen'
+import { BallEditorSheet, type EditableBall } from './BallEditorSheet'
 import { useMatchStore } from '../store/matchStore'
 import {
   allowedWicketKinds,
   deriveForInnings,
   getCurrentOverBalls,
   getInningsSummary,
+  getInningsContext,
+  getAvailableBattersAt,
   getLastBowlerId,
   getRequiredInfo,
   type DerivedBall,
@@ -85,17 +88,23 @@ interface OpeningBatsmenSheetProps {
   onClose: () => void
   battingTeam: Team
   onConfirm: (strikerId: string, nonStrikerId: string) => void
+  initialStrikerId?: string
+  initialNonStrikerId?: string
 }
 
 function OpeningBatsmenForm({
   battingTeam,
   onConfirm,
+  initialStrikerId,
+  initialNonStrikerId,
 }: {
   battingTeam: Team
   onConfirm: (strikerId: string, nonStrikerId: string) => void
+  initialStrikerId?: string
+  initialNonStrikerId?: string
 }) {
-  const [selectedStriker, setSelectedStriker] = useState(battingTeam.players[0]?.id ?? '')
-  const [selectedNonStriker, setSelectedNonStriker] = useState(battingTeam.players[1]?.id ?? '')
+  const [selectedStriker, setSelectedStriker] = useState(initialStrikerId ?? battingTeam.players[0]?.id ?? '')
+  const [selectedNonStriker, setSelectedNonStriker] = useState(initialNonStrikerId ?? battingTeam.players[1]?.id ?? '')
 
   const handleConfirm = () => {
     const s = selectedStriker || battingTeam.players[0]?.id || ''
@@ -152,6 +161,8 @@ function OpeningBatsmenSheet({
   onClose,
   battingTeam,
   onConfirm,
+  initialStrikerId,
+  initialNonStrikerId,
 }: OpeningBatsmenSheetProps) {
   return (
     <BottomSheet
@@ -159,7 +170,7 @@ function OpeningBatsmenSheet({
       onClose={onClose}
       title="Select Opening Batsmen"
     >
-      <OpeningBatsmenForm battingTeam={battingTeam} onConfirm={onConfirm} />
+      <OpeningBatsmenForm key={`${initialStrikerId ?? ''}-${initialNonStrikerId ?? ''}`} battingTeam={battingTeam} onConfirm={onConfirm} initialStrikerId={initialStrikerId} initialNonStrikerId={initialNonStrikerId} />
     </BottomSheet>
   )
 }
@@ -177,6 +188,9 @@ export function LiveScorerScreen() {
     redoStack,
     redoLastBall,
     deleteEvent,
+    editEvent,
+    insertEvent,
+    editOpeners,
     selectBowler,
     cancelBowlerSelection,
     selectOpeningBatsmen,
@@ -193,6 +207,8 @@ export function LiveScorerScreen() {
 
   const [wicketOpen, setWicketOpen] = useState(false)
   const [ballLogOpen, setBallLogOpen] = useState(false)
+  const [ballEditor, setBallEditor] = useState<{ mode: 'edit' | 'insert'; eventId?: string; initial: EditableBall; index: number } | null>(null)
+  const [editOpenersOpen, setEditOpenersOpen] = useState(false)
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null)
   const [deleteError, setDeleteError] = useState('')
   const [wicketType, setWicketType] = useState<WicketType>('bowled')
@@ -230,6 +246,20 @@ export function LiveScorerScreen() {
   const summary = current
     ? getInningsSummary(match, innings, currentInningsIndex)
     : null
+  const editorPrefixDerived = ballEditor && current
+    ? deriveForInnings(match, innings.map((item, index) => index === currentInningsIndex
+      ? { ...item, events: (item.events ?? []).slice(0, ballEditor.index) }
+      : item), currentInningsIndex)
+    : null
+  const closeBallLog = () => { setBallLogOpen(false); setDeleteConfirmId(null); setDeleteError('') }
+  const openInsertEditor = (afterEventId: string | null, index: number) => {
+    const lastBowler = [...(current?.events ?? [])].slice(0, index).reverse().find((event) => event.type === 'ball')
+    setBallEditor({ mode: 'insert', eventId: afterEventId ?? undefined, index, initial: {
+      bowlerId: lastBowler?.type === 'ball' ? lastBowler.bowlerId : current?.currentBowlerId ?? '',
+      delivery: 'legal', batRuns: 0, byeRuns: 0, legByeRuns: 0, wideExtraRuns: 0,
+    } })
+    closeBallLog()
+  }
 
   const totalRuns = summary ? summary.runs : 0
   const wickets = summary ? summary.wickets : 0
@@ -265,13 +295,13 @@ export function LiveScorerScreen() {
 
   const lastBowlerId = derived ? getLastBowlerId(derived.balls) : null
   const derivedBallById = new Map((derived?.balls ?? []).map((ball) => [ball.eventId, ball]))
-  const logGroups = new Map<number, { event: InningsEvent; ball?: DerivedBall }[]>()
+  const logGroups = new Map<number, { event: InningsEvent; ball?: DerivedBall; index: number }[]>()
   let logLegalBalls = 0
-  for (const event of current?.events ?? []) {
+  for (const [index, event] of (current?.events ?? []).entries()) {
     const ball = event.type === 'ball' ? derivedBallById.get(event.id) : undefined
     const over = ball?.over ?? Math.floor(logLegalBalls / 6)
     const entries = logGroups.get(over) ?? []
-    entries.push({ event, ball })
+    entries.push({ event, ball, index })
     logGroups.set(over, entries)
     if (ball?.isLegal) logLegalBalls += 1
   }
@@ -454,7 +484,7 @@ export function LiveScorerScreen() {
             <Pencil size={13} /> Edit Player Names
           </button>
           <div className="flex gap-1">
-            <button type="button" onClick={() => setBallLogOpen(true)} className="top-bar-action btn-press">
+            <button type="button" onClick={() => { setDeleteConfirmId(null); setDeleteError(''); setBallLogOpen(true) }} className="top-bar-action btn-press">
               Ball log
             </button>
             <button type="button" onClick={() => setShowScorecard(true)} className="top-bar-action btn-press">
@@ -726,13 +756,14 @@ export function LiveScorerScreen() {
         <Button fullWidth className="mt-4" onClick={saveEditNames}>Save Names</Button>
       </BottomSheet>
 
-      <BottomSheet open={ballLogOpen} onClose={() => setBallLogOpen(false)} title="Ball log">
+      <BottomSheet open={ballLogOpen} onClose={closeBallLog} title="Ball log">
+        <button type="button" className="action-btn mb-2" onClick={() => openInsertEditor(null, (current?.events ?? []).findIndex((event) => event.type === 'openers') + 1)}>Insert ball after openers</button>
         <div className="overflow-y-auto" style={{ maxHeight: 'calc(100dvh - 170px)' }}>
           {!(derived?.balls.length) && <p className="text-sm py-2" style={{ color: '#999' }}>No balls yet</p>}
           {orderedLogGroups.map(([over, entries]) => (
             <section key={over} className="mb-3">
               <p className="section-label mb-1">Over {over + 1}</p>
-              {entries.map(({ event, ball }) => {
+              {entries.map(({ event, ball, index }) => {
                 const deletable = event.type === 'ball' || event.type === 'swapEnds' || event.type === 'retiredHurt'
                 let rowLabel = ''
                 if (event.type === 'openers') {
@@ -760,10 +791,13 @@ export function LiveScorerScreen() {
                           {bowlerName} to {batterName} · {getBallDotText(ball)}{wicketText ? ` · ${wicketText}` : ''}
                         </span>
                         {deletable && <button type="button" onClick={() => confirmDeleteEvent(event.id)} className="text-xs font-medium text-gray-600">{deleteConfirmId === event.id ? 'Confirm delete?' : 'Delete'}</button>}
+                        {event.type === 'ball' && <button type="button" onClick={() => { setBallEditor({ mode: 'edit', eventId: event.id, index, initial: event }); closeBallLog() }} className="text-xs font-medium text-gray-600">Edit</button>}
+                        {event.type === 'ball' && <button type="button" onClick={() => openInsertEditor(event.id, index + 1)} className="text-xs font-medium text-gray-600">Insert after</button>}
                       </div>
                     ) : (
                       <div className="flex items-center gap-2 text-[11px] text-gray-400">
                         <span className="flex-1">{rowLabel}</span>
+                        {event.type === 'openers' && <button type="button" onClick={() => { closeBallLog(); setEditOpenersOpen(true) }} className="text-xs font-medium text-gray-600">Edit</button>}
                         {deletable && <button type="button" onClick={() => confirmDeleteEvent(event.id)} className="text-xs font-medium text-gray-600">{deleteConfirmId === event.id ? 'Confirm delete?' : 'Delete'}</button>}
                       </div>
                     )}
@@ -775,6 +809,49 @@ export function LiveScorerScreen() {
           ))}
         </div>
       </BottomSheet>
+
+      {ballEditor && current && <BallEditorSheet
+        key={`${ballEditor.mode}-${ballEditor.eventId ?? 'top'}-${ballEditor.initial.bowlerId}`}
+        open
+        title={ballEditor.mode === 'edit' ? 'Edit ball' : 'Insert ball'}
+        initial={ballEditor.initial}
+        bowlingTeam={bowlingTeam}
+        battingTeam={battingTeam}
+        strikerId={editorPrefixDerived?.strikerId ?? null}
+        nonStrikerId={editorPrefixDerived?.nonStrikerId ?? null}
+        isFreeHit={editorPrefixDerived?.isFreeHitNext ?? false}
+        availableBatters={getAvailableBattersAt(current.events ?? [], getInningsContext(match, innings, currentInningsIndex), ballEditor.index)}
+        onClose={() => { setBallEditor(null); setDeleteConfirmId(null); setDeleteError(''); setBallLogOpen(true) }}
+        onSave={(ball) => {
+          const payload = { ...ball, ...(ball.id ? {} : {}) }
+          const result = ballEditor.mode === 'edit'
+            ? editEvent(ballEditor.eventId ?? '', payload as Extract<InningsEvent, { type: 'ball' }>)
+            : insertEvent(ballEditor.eventId ?? null, {
+                bowlerId: payload.bowlerId,
+                delivery: payload.delivery,
+                batRuns: payload.batRuns,
+                byeRuns: payload.byeRuns,
+                legByeRuns: payload.legByeRuns,
+                wideExtraRuns: payload.wideExtraRuns,
+                ...(payload.wicket ? { wicket: payload.wicket } : {}),
+              })
+          if (result.ok) { setBallEditor(null); setDeleteConfirmId(null); setDeleteError(''); setBallLogOpen(true) }
+          return result
+        }}
+      />}
+      <OpeningBatsmenSheet
+        open={editOpenersOpen}
+        onClose={() => { setEditOpenersOpen(false); setBallLogOpen(true) }}
+        battingTeam={battingTeam}
+        initialStrikerId={current?.events?.find((event) => event.type === 'openers')?.type === 'openers'
+          ? current.events.find((event) => event.type === 'openers')?.strikerId : undefined}
+        initialNonStrikerId={current?.events?.find((event) => event.type === 'openers')?.type === 'openers'
+          ? current.events.find((event) => event.type === 'openers')?.nonStrikerId : undefined}
+        onConfirm={(s, ns) => {
+          const result = editOpeners(s, ns)
+          if (result.ok) { setEditOpenersOpen(false); setBallLogOpen(true) }
+        }}
+      />
 
       {/* Wicket modal */}
       <BottomSheet open={wicketOpen} onClose={() => setWicketOpen(false)} title="Wicket">
