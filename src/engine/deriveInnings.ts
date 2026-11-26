@@ -17,7 +17,8 @@ const ALL_WICKET_KINDS: WicketKind[] = [
 const FREE_HIT_WICKET_KINDS: WicketKind[] = ['runOut', 'obstructingField', 'hitBallTwice']
 const WIDE_WICKET_KINDS: WicketKind[] = ['stumped', 'hitWicket', ...FREE_HIT_WICKET_KINDS]
 
-export function allowedWicketKinds(delivery: DeliveryKind, isFreeHit: boolean): WicketKind[] {
+export function allowedWicketKinds(delivery: DeliveryKind, isFreeHit: boolean, withByes = false): WicketKind[] {
+  if (withByes) return ['runOut', 'obstructingField']
   if (isFreeHit || delivery === 'noBall') return [...FREE_HIT_WICKET_KINDS]
   if (delivery === 'wide') return [...WIDE_WICKET_KINDS]
   return [...ALL_WICKET_KINDS]

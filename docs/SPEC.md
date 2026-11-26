@@ -41,11 +41,12 @@ overs, wicketsPerInnings, playersPerTeam, freeHitAfterNoBall, freeHitAfterWide (
        Fixes: undo restoring wrong batsmen, byes charged to bowler, dismissal text ("c ? b"),
        result text when Team 2 bats first, "1 wickets" grammar, "did not bat" bug, not-out/retired labels
 [x] 3a deliveries (no-ball/wide with runs as ONE delivery, free hit banner, block disallowed wickets on free hit)
-[ ] 3b wicket details (all dismissal types, fielder, run-out with runs, wicket on wide/no-ball, retired out, timed out)
+[x] 3b wicket details (all dismissal types, fielder, run-out with runs, wicket on wide/no-ball, retired out, timed out)
 [ ] 3c overthrows, penalty runs, dead ball, short run
-[ ] 4  Undo + redo (any number of balls, across overs and innings), edit/delete any past ball,
-       reopen a finished match, ball-by-ball log screen, confirm before destructive actions,
-       edit overs/wickets/innings/toss mid-match, add/remove/substitute/rename players mid-match
+[ ] 4a redo + ball log + delete any past ball
+[ ] 4b edit or insert any past ball
+[ ] 4c change overs/wickets/innings/players mid-match (add, remove, substitute, rename)
+[ ] 4d reopen a finished match, undo across innings, confirmations
 [ ] 5  Storage: full matches (no cap), IndexedDB or localStorage with versioning, JSON export/import,
        history list that opens the full scorecard
 [ ] 6  Player pool + teams: roles, captain, pick-from-pool and quick-start (typed names auto-save),

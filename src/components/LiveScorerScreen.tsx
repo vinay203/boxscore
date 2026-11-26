@@ -25,7 +25,7 @@ import {
   type DerivedBall,
 } from '../engine'
 import type { ExtraType, Team, WicketType } from '../types'
-import type { WicketKind } from '../engine/types'
+import type { InningsEvent, WicketKind } from '../engine/types'
 import {
   getPlayerById,
   getPlayerName,
@@ -44,21 +44,32 @@ const DISMISSAL_TYPES: { type: WicketKind; label: string }[] = [
   { type: 'hitBallTwice', label: 'Hit Ball Twice' },
 ]
 
-function BallDot({ ball }: { ball: DerivedBall }) {
-  const ring = ball.isFreeHit ? ' free-hit' : ''
-  if (ball.delivery === 'wide') {
-    const label = `Wd${ball.wideExtraRuns || ''}${ball.wicket ? 'W' : ''}`
-    return <span className={`ball-dot ${ball.wicket ? 'wicket' : 'wide'}${ring} ${label.length > 2 ? 'ball-dot--long' : ''}`}>{label}</span>
-  }
+function getBallDotText(ball: DerivedBall): string {
+  if (ball.delivery === 'wide') return `Wd${ball.wideExtraRuns || ''}${ball.wicket ? 'W' : ''}`
   if (ball.delivery === 'noBall') {
     const noBallRuns = ball.byeRuns > 0 || ball.legByeRuns > 0
       ? `B${ball.byeRuns + ball.legByeRuns}`
       : ball.batRuns > 0 ? `${ball.batRuns}` : ''
-    const label = `Nb${noBallRuns}${ball.wicket ? 'W' : ''}`
+    return `Nb${noBallRuns}${ball.wicket ? 'W' : ''}`
+  }
+  const runs = ball.batRuns + ball.byeRuns + ball.legByeRuns
+  if (ball.wicket) return runs === 0 ? 'W' : `${ball.byeRuns > 0 || ball.legByeRuns > 0 ? `B${runs}` : runs}W`
+  if (runs === 0) return '·'
+  return ball.byeRuns > 0 || ball.legByeRuns > 0 ? `B${runs}` : `${runs}`
+}
+
+function BallDot({ ball }: { ball: DerivedBall }) {
+  const ring = ball.isFreeHit ? ' free-hit' : ''
+  if (ball.delivery === 'wide') {
+    const label = getBallDotText(ball)
+    return <span className={`ball-dot ${ball.wicket ? 'wicket' : 'wide'}${ring} ${label.length > 2 ? 'ball-dot--long' : ''}`}>{label}</span>
+  }
+  if (ball.delivery === 'noBall') {
+    const label = getBallDotText(ball)
     return <span className={`ball-dot ${ball.wicket ? 'wicket' : 'noball'}${ring} ${label.length > 2 ? 'ball-dot--long' : ''}`}>{label}</span>
   }
-  if (ball.wicket) return <span className={`ball-dot wicket${ring}`}>W</span>
   const runs = ball.batRuns + ball.byeRuns + ball.legByeRuns
+  if (ball.wicket) return <span className={`ball-dot wicket${ring} ${runs > 0 ? 'ball-dot--long' : ''}`}>{getBallDotText(ball)}</span>
   if (runs === 0) return <span className={`ball-dot dot${ring}`}>·</span>
   return (
     <span
@@ -163,6 +174,9 @@ export function LiveScorerScreen() {
     setShowScorecard,
     recordDelivery,
     recordWicket,
+    redoStack,
+    redoLastBall,
+    deleteEvent,
     selectBowler,
     cancelBowlerSelection,
     selectOpeningBatsmen,
@@ -178,6 +192,9 @@ export function LiveScorerScreen() {
   } = useMatchStore()
 
   const [wicketOpen, setWicketOpen] = useState(false)
+  const [ballLogOpen, setBallLogOpen] = useState(false)
+  const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null)
+  const [deleteError, setDeleteError] = useState('')
   const [wicketType, setWicketType] = useState<WicketType>('bowled')
   const [outBatsmanId, setOutBatsmanId] = useState('')
   const [newBatsmanId, setNewBatsmanId] = useState('')
@@ -247,6 +264,33 @@ export function LiveScorerScreen() {
   const remainingBatsmen = summary ? summary.remainingBatsmen : []
 
   const lastBowlerId = derived ? getLastBowlerId(derived.balls) : null
+  const derivedBallById = new Map((derived?.balls ?? []).map((ball) => [ball.eventId, ball]))
+  const logGroups = new Map<number, { event: InningsEvent; ball?: DerivedBall }[]>()
+  let logLegalBalls = 0
+  for (const event of current?.events ?? []) {
+    const ball = event.type === 'ball' ? derivedBallById.get(event.id) : undefined
+    const over = ball?.over ?? Math.floor(logLegalBalls / 6)
+    const entries = logGroups.get(over) ?? []
+    entries.push({ event, ball })
+    logGroups.set(over, entries)
+    if (ball?.isLegal) logLegalBalls += 1
+  }
+  const orderedLogGroups = [...logGroups.entries()].sort(([overA], [overB]) => overB - overA)
+
+  const confirmDeleteEvent = (eventId: string) => {
+    if (deleteConfirmId !== eventId) {
+      setDeleteConfirmId(eventId)
+      setDeleteError('')
+      return
+    }
+    const result = deleteEvent(eventId)
+    if (!result.ok) {
+      setDeleteError(result.error ?? 'Could not delete event')
+      return
+    }
+    setDeleteConfirmId(null)
+    setDeleteError('')
+  }
 
   const handleRun = (runs: number) => {
     if (!current?.currentBowlerId || current?.pendingBowlerSelection || current?.pendingBatsmanSelection) {
@@ -302,7 +346,7 @@ export function LiveScorerScreen() {
         ? 'No Ball + runs off the bat'
         : selectedBye === 'bye' ? 'Bye' : selectedBye === 'legBye' ? 'Leg Bye' : ''
   const pendingDelivery = selectedDelivery ?? 'legal'
-  const allowedPendingWickets = allowedWicketKinds(pendingDelivery, !!derived?.isFreeHitNext)
+  const allowedPendingWickets = allowedWicketKinds(pendingDelivery, !!derived?.isFreeHitNext, !!selectedBye)
   const effectiveWicketType = allowedPendingWickets.includes(wicketType) ? wicketType : allowedPendingWickets[0]
   const isStrikerOnlyWicket = ['bowled', 'caught', 'lbw', 'stumped', 'hitWicket', 'hitBallTwice'].includes(effectiveWicketType)
   const wicketRuns = selectedBye && completedRuns === 0 ? 1 : completedRuns
@@ -319,7 +363,7 @@ export function LiveScorerScreen() {
       changeBowlerRequest()
       return
     }
-    const allowed = allowedWicketKinds(pendingDelivery, !!derived?.isFreeHitNext)
+    const allowed = allowedWicketKinds(pendingDelivery, !!derived?.isFreeHitNext, !!selectedBye)
     if (!allowed.includes(wicketType)) setWicketType(allowed[0])
     const defaultOut = strikerId
     const defaultNew = remainingBatsmen[0]?.id ?? ''
@@ -343,7 +387,7 @@ export function LiveScorerScreen() {
     recordWicket(effectiveWicketType, outBatsmanId || strikerId, actualNew, {
       delivery: pendingDelivery,
       ...runOpts,
-      fielderId: fielderId || undefined,
+      ...(['caught', 'stumped', 'runOut'].includes(effectiveWicketType) && fielderId ? { fielderId } : {}),
     })
     clearModifier()
     setWicketOpen(false)
@@ -409,9 +453,14 @@ export function LiveScorerScreen() {
           <button type="button" onClick={openEditNames} className="top-bar-action btn-press">
             <Pencil size={13} /> Edit Player Names
           </button>
-          <button type="button" onClick={() => setShowScorecard(true)} className="top-bar-action btn-press">
-            <BarChart3 size={14} /> Scorecard
-          </button>
+          <div className="flex gap-1">
+            <button type="button" onClick={() => setBallLogOpen(true)} className="top-bar-action btn-press">
+              Ball log
+            </button>
+            <button type="button" onClick={() => setShowScorecard(true)} className="top-bar-action btn-press">
+              <BarChart3 size={14} /> Scorecard
+            </button>
+          </div>
         </div>
 
         {/* Score header */}
@@ -540,9 +589,14 @@ export function LiveScorerScreen() {
           </div>
 
           <div className="flex items-center justify-between">
-            <button type="button" onClick={() => { undoLastBall(); clearModifier() }} className="undo-button flex items-center gap-1 py-2 btn-press">
-              <Undo2 size={13} /> Undo Ball
-            </button>
+            <div className="flex items-center gap-3">
+              <button type="button" onClick={() => { undoLastBall(); clearModifier() }} className="undo-button flex items-center gap-1 py-2 btn-press">
+                <Undo2 size={13} /> Undo Ball
+              </button>
+              <button type="button" disabled={redoStack.length === 0} onClick={() => { redoLastBall(); clearModifier() }} className="undo-button flex items-center gap-1 py-2 btn-press">
+                Redo
+              </button>
+            </div>
             <button type="button" onClick={() => setConfirmEndInnings(true)} className="action-btn action-btn--end">
               <Flag size={11} /> End Innings
             </button>
@@ -672,12 +726,62 @@ export function LiveScorerScreen() {
         <Button fullWidth className="mt-4" onClick={saveEditNames}>Save Names</Button>
       </BottomSheet>
 
+      <BottomSheet open={ballLogOpen} onClose={() => setBallLogOpen(false)} title="Ball log">
+        <div className="overflow-y-auto" style={{ maxHeight: 'calc(100dvh - 170px)' }}>
+          {!(derived?.balls.length) && <p className="text-sm py-2" style={{ color: '#999' }}>No balls yet</p>}
+          {orderedLogGroups.map(([over, entries]) => (
+            <section key={over} className="mb-3">
+              <p className="section-label mb-1">Over {over + 1}</p>
+              {entries.map(({ event, ball }) => {
+                const deletable = event.type === 'ball' || event.type === 'swapEnds' || event.type === 'retiredHurt'
+                let rowLabel = ''
+                if (event.type === 'openers') {
+                  rowLabel = `Openers: ${getPlayerById(battingTeam, event.strikerId)?.name ?? event.strikerId} / ${getPlayerById(battingTeam, event.nonStrikerId)?.name ?? event.nonStrikerId}`
+                } else if (event.type === 'swapEnds') {
+                  rowLabel = 'Ends swapped'
+                } else if (event.type === 'retiredHurt') {
+                  rowLabel = `${getPlayerById(battingTeam, event.batterId)?.name ?? event.batterId} retired hurt`
+                } else if (event.type === 'endInnings') {
+                  rowLabel = 'Innings ended'
+                } else if (event.type === 'dismissal') {
+                  rowLabel = `${event.kind === 'retiredOut' ? 'Retired out' : 'Timed out'}: ${getPlayerById(battingTeam, event.outId)?.name ?? event.outId}`
+                }
+                const batterName = ball ? getPlayerById(battingTeam, ball.strikerId)?.name ?? ball.strikerId : ''
+                const bowlerName = ball ? getPlayerName(match, current?.bowlingTeamId ?? '', ball.bowlerId) : ''
+                const wicketText = ball?.wicket
+                  ? `${DISMISSAL_TYPES.find((dismissal) => dismissal.type === ball.wicket?.kind)?.label ?? ball.wicket.kind} - ${getPlayerById(battingTeam, ball.wicket.outId)?.name ?? ball.wicket.outId} ${summary?.batting.find((batter) => batter.id === ball.wicket?.outId)?.dismissalText ?? ''}`.trim()
+                  : ''
+                return (
+                  <div key={event.id} className="border-b border-gray-100 py-2">
+                    {ball ? (
+                      <div className="flex items-start gap-2 text-xs">
+                        <span className="font-semibold text-gray-900">{ball.over + 1}.{ball.ballInOver}</span>
+                        <span className="min-w-0 flex-1 text-gray-600">
+                          {bowlerName} to {batterName} · {getBallDotText(ball)}{wicketText ? ` · ${wicketText}` : ''}
+                        </span>
+                        {deletable && <button type="button" onClick={() => confirmDeleteEvent(event.id)} className="text-xs font-medium text-gray-600">{deleteConfirmId === event.id ? 'Confirm delete?' : 'Delete'}</button>}
+                      </div>
+                    ) : (
+                      <div className="flex items-center gap-2 text-[11px] text-gray-400">
+                        <span className="flex-1">{rowLabel}</span>
+                        {deletable && <button type="button" onClick={() => confirmDeleteEvent(event.id)} className="text-xs font-medium text-gray-600">{deleteConfirmId === event.id ? 'Confirm delete?' : 'Delete'}</button>}
+                      </div>
+                    )}
+                    {deleteError && deleteConfirmId === event.id && <p className="mt-1 text-xs text-red-600">{deleteError}</p>}
+                  </div>
+                )
+              })}
+            </section>
+          ))}
+        </div>
+      </BottomSheet>
+
       {/* Wicket modal */}
       <BottomSheet open={wicketOpen} onClose={() => setWicketOpen(false)} title="Wicket">
         {wicketModifierCaption && <p className="text-sm mb-3" style={{ color: '#777' }}>{wicketModifierCaption}</p>}
         <div className="grid grid-cols-2 gap-2 mb-4">
           {DISMISSAL_TYPES.map((d) => (
-            <button key={d.type} type="button" disabled={!allowedPendingWickets.includes(d.type)} onClick={() => { setWicketType(d.type); setOutBatsmanId(strikerId) }}
+            <button key={d.type} type="button" disabled={!allowedPendingWickets.includes(d.type)} onClick={() => { setWicketType(d.type); setOutBatsmanId(strikerId); setFielderId('') }}
               className={`toss-btn ${effectiveWicketType === d.type ? 'selected' : ''} ${!allowedPendingWickets.includes(d.type) ? 'disabled' : ''}`} style={{ padding: '10px', fontSize: '13px' }}>
               {d.label}
             </button>

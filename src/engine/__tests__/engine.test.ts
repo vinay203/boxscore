@@ -39,6 +39,11 @@ describe('Cricket Scoring Engine (pure TypeScript)', () => {
     expect(allowedWicketKinds('noBall', false)).toEqual(restricted)
     expect(allowedWicketKinds('legal', true)).toEqual(restricted)
     expect(allowedWicketKinds('wide', true)).toEqual(restricted)
+    for (const delivery of ['legal', 'wide', 'noBall'] as const) {
+      for (const freeHit of [false, true]) {
+        expect(allowedWicketKinds(delivery, freeHit, true)).toEqual(['runOut', 'obstructingField'])
+      }
+    }
   })
 
   // Test 1

@@ -64,6 +64,7 @@ function isValidDeliveryInput(input: DeliveryInput): boolean {
 }
 
 interface AppStore extends MatchState {
+  redoStack: InningsEvent[]
   screen: Screen
   setupStep: 1 | 2 | 3
   setupDraft: SetupDraft
@@ -121,6 +122,8 @@ interface AppStore extends MatchState {
     team2Players: string[],
   ) => void
   undoLastBall: () => void
+  redoLastBall: () => void
+  deleteEvent: (eventId: string) => { ok: boolean; error?: string }
   startSecondInnings: () => void
   finishMatch: () => void
   swapBatsmen: () => void
@@ -176,7 +179,39 @@ function persist(state: MatchState): void {
   saveCurrentMatch(state)
 }
 
+function recomputeEventChange(
+  match: Match,
+  innings: Innings[],
+  currentInningsIndex: number,
+  events: InningsEvent[],
+  restoreBowlerFromLastBall = true,
+): { innings: Innings[]; matchStatus: MatchStatus; complete: boolean } {
+  const current = innings[currentInningsIndex]
+  const interim: Innings = { ...current, events, status: 'live' }
+  const synced = syncInnings(interim, match, innings, currentInningsIndex)
+  const nextInnings = [...innings]
+  nextInnings[currentInningsIndex] = synced
+  const derived = deriveForInnings(match, nextInnings, currentInningsIndex)
+  const lastBall = derived.balls.at(-1)
+  nextInnings[currentInningsIndex] = restoreBowlerFromLastBall
+    ? {
+        ...synced,
+        currentBowlerId: lastBall?.bowlerId ?? '',
+        pendingBowlerSelection: derived.needsNewBowler || derived.balls.length === 0,
+        status: derived.isComplete ? 'complete' : 'live',
+      }
+    : synced
+  return {
+    innings: nextInnings,
+    matchStatus: derived.isComplete
+      ? currentInningsIndex === 0 ? 'innings_break' : 'complete'
+      : 'live',
+    complete: derived.isComplete,
+  }
+}
+
 export const useMatchStore = create<AppStore>((set, get) => ({
+  redoStack: [],
   match: null,
   innings: [],
   currentInningsIndex: 0,
@@ -216,11 +251,12 @@ export const useMatchStore = create<AppStore>((set, get) => ({
         innings: current.innings,
         currentInningsIndex: current.currentInningsIndex,
         matchStatus: current.matchStatus,
+        redoStack: [],
         showResumePrompt: true,
         matchHistory: history,
       })
     } else {
-      set({ matchHistory: history })
+      set({ matchHistory: history, redoStack: [] })
     }
   },
 
@@ -250,6 +286,7 @@ export const useMatchStore = create<AppStore>((set, get) => ({
       innings: [],
       currentInningsIndex: 0,
       matchStatus: 'setup',
+      redoStack: [],
       showResumePrompt: false,
       screen: 'home',
       setupStep: 1,
@@ -287,6 +324,7 @@ export const useMatchStore = create<AppStore>((set, get) => ({
       setupStep: 1,
       screen: 'setup',
       showResumePrompt: false,
+      redoStack: [],
     })
   },
 
@@ -333,7 +371,7 @@ export const useMatchStore = create<AppStore>((set, get) => ({
     }
 
     persist(newState)
-    set({ ...newState, screen: 'live' })
+    set({ ...newState, screen: 'live', redoStack: [] })
   },
 
   recordRun: (runs) => get().recordDelivery({ delivery: 'legal', batRuns: runs }),
@@ -401,7 +439,7 @@ export const useMatchStore = create<AppStore>((set, get) => ({
     }
 
     persist(newState)
-    set(newState)
+    set({ ...newState, redoStack: [] })
     if (matchStatus === 'complete') {
       get().finishMatch()
     }
@@ -487,7 +525,7 @@ export const useMatchStore = create<AppStore>((set, get) => ({
     }
 
     persist(newState)
-    set(newState)
+    set({ ...newState, redoStack: [] })
     if (matchStatus === 'complete') {
       get().finishMatch()
     }
@@ -593,7 +631,7 @@ export const useMatchStore = create<AppStore>((set, get) => ({
     }
 
     persist(newState)
-    set(newState)
+    set({ ...newState, redoStack: [] })
     if (matchStatus === 'complete') {
       get().finishMatch()
     }
@@ -667,7 +705,7 @@ export const useMatchStore = create<AppStore>((set, get) => ({
     }
 
     persist(newState)
-    set(newState)
+    set({ ...newState, redoStack: [] })
     if (matchStatus === 'complete') {
       get().finishMatch()
     }
@@ -710,7 +748,7 @@ export const useMatchStore = create<AppStore>((set, get) => ({
     }
 
     persist(newState)
-    set({ ...newState, screen: 'live' })
+    set({ ...newState, screen: 'live', redoStack: [] })
   },
 
   undoLastBall: () => {
@@ -731,50 +769,74 @@ export const useMatchStore = create<AppStore>((set, get) => ({
     if (lastIndex === -1) {
       return
     }
-
-    const newEvents = [
-      ...events.slice(0, lastIndex),
-      ...events.slice(lastIndex + 1),
-    ]
-
-    const interim: Innings = {
-      ...current,
-      events: newEvents,
-      status: 'live',
-    }
-
-    const synced = syncInnings(interim, match, innings, currentInningsIndex)
-    const newInnings = [...innings]
-    newInnings[currentInningsIndex] = synced
-
-    const derived = deriveForInnings(match, newInnings, currentInningsIndex)
-
-    const remainingBalls = newEvents.filter(
-      (e): e is Extract<InningsEvent, { type: 'ball' }> => e.type === 'ball',
-    )
-    const lastBall = remainingBalls.at(-1)
-    const currentBowlerId = lastBall ? lastBall.bowlerId : ''
-    const pendingBowlerSelection =
-      derived.needsNewBowler || derived.balls.length === 0
-
-    const restored: Innings = {
-      ...synced,
-      currentBowlerId,
-      pendingBowlerSelection,
-      status: 'live',
-    }
-
-    newInnings[currentInningsIndex] = restored
-
+    const removedEvent = events[lastIndex]
+    const eventsWithoutLast = events.filter((_, index) => index !== lastIndex)
+    const recomputed = recomputeEventChange(match, innings, currentInningsIndex, eventsWithoutLast)
     const newState: MatchState = {
       match,
-      innings: newInnings,
+      innings: recomputed.innings,
       currentInningsIndex,
-      matchStatus: 'live',
+      matchStatus: recomputed.matchStatus,
     }
 
     persist(newState)
-    set(newState)
+    set({ ...newState, redoStack: [...state.redoStack, removedEvent] })
+  },
+
+  redoLastBall: () => {
+    const state = get()
+    const { match, innings, currentInningsIndex, redoStack } = state
+    const event = redoStack.at(-1)
+    if (!match || !event) return
+    const current = innings[currentInningsIndex]
+    const recomputed = recomputeEventChange(match, innings, currentInningsIndex, [...(current.events ?? []), event], false)
+    const newState: MatchState = {
+      match,
+      innings: recomputed.innings,
+      currentInningsIndex,
+      matchStatus: recomputed.matchStatus,
+    }
+    persist(newState)
+    set({ ...newState, redoStack: redoStack.slice(0, -1) })
+    if (recomputed.matchStatus === 'complete') get().finishMatch()
+  },
+
+  deleteEvent: (eventId) => {
+    const state = get()
+    const { match, innings, currentInningsIndex } = state
+    if (!match) return { ok: false, error: 'No active match' }
+    const current = innings[currentInningsIndex]
+    const events = current.events ?? []
+    const eventIndex = events.findIndex((event) => event.id === eventId)
+    if (eventIndex < 0) return { ok: false, error: 'Event not found in this innings' }
+    const event = events[eventIndex]
+    if (event.type === 'openers') return { ok: false, error: 'Openers cannot be deleted' }
+    if (event.type === 'endInnings') return { ok: false, error: 'Innings end cannot be deleted' }
+    if (event.type !== 'ball' && event.type !== 'swapEnds' && event.type !== 'retiredHurt') {
+      return { ok: false, error: 'This event cannot be deleted' }
+    }
+
+    const currentErrors = deriveForInnings(match, innings, currentInningsIndex).errors
+    const eventsAfterDelete = events.filter((_, index) => index !== eventIndex)
+    const candidateInnings = [...innings]
+    candidateInnings[currentInningsIndex] = { ...current, events: eventsAfterDelete }
+    const candidateErrors = deriveForInnings(match, candidateInnings, currentInningsIndex).errors
+    if (candidateErrors.length > currentErrors.length) {
+      const error = candidateErrors.find((message, index) => !currentErrors.includes(message) || index >= currentErrors.length)
+      return { ok: false, error: error ?? candidateErrors[currentErrors.length] ?? 'Deleting this event makes the innings invalid' }
+    }
+
+    const recomputed = recomputeEventChange(match, innings, currentInningsIndex, eventsAfterDelete)
+    const newState: MatchState = {
+      match,
+      innings: recomputed.innings,
+      currentInningsIndex,
+      matchStatus: recomputed.matchStatus,
+    }
+    persist(newState)
+    set({ ...newState, redoStack: [] })
+    if (recomputed.matchStatus === 'complete') get().finishMatch()
+    return { ok: true }
   },
 
   startSecondInnings: () => {
@@ -853,6 +915,7 @@ export const useMatchStore = create<AppStore>((set, get) => ({
       matchStatus: 'complete',
       screen: 'summary',
       matchHistory: loadMatchHistory(),
+      redoStack: [],
     })
   },
 
@@ -896,7 +959,7 @@ export const useMatchStore = create<AppStore>((set, get) => ({
     }
 
     persist(newState)
-    set(newState)
+    set({ ...newState, redoStack: [] })
     if (matchStatus === 'complete') {
       get().finishMatch()
     }
@@ -938,7 +1001,7 @@ export const useMatchStore = create<AppStore>((set, get) => ({
     }
 
     persist(newState)
-    set(newState)
+    set({ ...newState, redoStack: [] })
     if (matchStatus === 'complete') {
       get().finishMatch()
     }

@@ -45,6 +45,179 @@ describe('Store & Engine Integration (Task 4)', () => {
     delete mockStorage['boxscore_match_history']
   })
 
+  it('redo restores the identical event log after a wicket and across an over boundary', () => {
+    setupTestMatch(2, 3)
+    let store = useMatchStore.getState()
+    let match = store.match!
+    const [p1, p2, p3] = match.team1.players
+    store.selectOpeningBatsmen(p1.id, p2.id)
+    store.selectBowler(match.team2.players[0].id)
+    store.recordWicket('caught', p1.id, p3.id)
+    const wicketState = useMatchStore.getState()
+    const wicketEvents = wicketState.innings[0].events
+    const wicketBatsmen = wicketState.innings[0].currentBatsmanIds
+    store.undoLastBall()
+    store.redoLastBall()
+    expect(useMatchStore.getState().innings[0].events).toEqual(wicketEvents)
+    expect(useMatchStore.getState().innings[0].currentBatsmanIds).toEqual(wicketBatsmen)
+
+    setupTestMatch(2, 3)
+    store = useMatchStore.getState()
+    match = store.match!
+    store.selectOpeningBatsmen(match.team1.players[0].id, match.team1.players[1].id)
+    store.selectBowler(match.team2.players[0].id)
+    for (let i = 0; i < 6; i++) store.recordRun(0)
+    const beforeUndo = useMatchStore.getState().innings[0]
+    store.undoLastBall()
+    store.redoLastBall()
+    const afterRedo = useMatchStore.getState().innings[0]
+    expect(afterRedo.events).toEqual(beforeUndo.events)
+    expect(afterRedo.pendingBowlerSelection).toBe(beforeUndo.pendingBowlerSelection)
+    expect(afterRedo.currentBowlerId).toBe(beforeUndo.currentBowlerId)
+  })
+
+  it('any new scoring or administrative event clears redo history', () => {
+    const runKinds = ['recordDelivery', 'recordWicket', 'swapBatsmen', 'retireBatsman', 'endInningsEarly', 'selectOpeningBatsmen'] as const
+    for (const kind of runKinds) {
+      setupTestMatch()
+      const store = useMatchStore.getState()
+      const match = store.match!
+      const [p1, p2, p3] = match.team1.players
+      store.selectOpeningBatsmen(p1.id, p2.id)
+      store.selectBowler(match.team2.players[0].id)
+      store.recordRun(0)
+      store.undoLastBall()
+      store.selectBowler(match.team2.players[0].id)
+      if (kind === 'recordDelivery') store.recordDelivery({ delivery: 'legal', batRuns: 1 })
+      else if (kind === 'recordWicket') store.recordWicket('bowled', p1.id, p3.id)
+      else if (kind === 'swapBatsmen') store.swapBatsmen()
+      else if (kind === 'retireBatsman') store.retireBatsman(true, p3.id)
+      else if (kind === 'endInningsEarly') store.endInningsEarly()
+      else store.selectOpeningBatsmen(p1.id, p2.id)
+      expect(useMatchStore.getState().redoStack).toEqual([])
+    }
+  })
+
+  it('deleting a past dot preserves score and strike except for the ball count', () => {
+    setupTestMatch()
+    const store = useMatchStore.getState()
+    const match = store.match!
+    const [p1, p2] = match.team1.players
+    store.selectOpeningBatsmen(p1.id, p2.id)
+    store.selectBowler(match.team2.players[0].id)
+    store.recordRun(1)
+    store.recordRun(0)
+    store.recordRun(4)
+    const before = useMatchStore.getState().innings[0]
+    const dotId = before.events?.find((event) => event.type === 'ball' && event.batRuns === 0)?.id
+    const result = store.deleteEvent(dotId!)
+    const after = useMatchStore.getState().innings[0]
+    expect(result.ok).toBe(true)
+    expect(getInningsSummary(match, [after], 0).runs).toBe(5)
+    expect(getInningsSummary(match, [after], 0).legalBalls).toBe(2)
+    expect(after.currentBatsmanIds).toEqual(before.currentBatsmanIds)
+  })
+
+  it('deleting a past four reduces score and recomputes strike', () => {
+    setupTestMatch()
+    const store = useMatchStore.getState()
+    const match = store.match!
+    const [p1, p2] = match.team1.players
+    store.selectOpeningBatsmen(p1.id, p2.id)
+    store.selectBowler(match.team2.players[0].id)
+    store.recordRun(4)
+    store.recordRun(1)
+    const state = useMatchStore.getState()
+    const fourId = state.innings[0].events?.find((event) => event.type === 'ball' && event.batRuns === 4)?.id
+    expect(store.deleteEvent(fourId!).ok).toBe(true)
+    const after = useMatchStore.getState().innings[0]
+    expect(getInningsSummary(match, [after], 0).runs).toBe(1)
+    expect(after.currentBatsmanIds).toEqual([p2.id, p1.id])
+  })
+
+  it('deleting swapEnds restores the original striker', () => {
+    setupTestMatch()
+    const store = useMatchStore.getState()
+    const match = store.match!
+    const [p1, p2] = match.team1.players
+    store.selectOpeningBatsmen(p1.id, p2.id)
+    store.swapBatsmen()
+    const swap = useMatchStore.getState().innings[0].events?.find((event) => event.type === 'swapEnds')
+    expect(useMatchStore.getState().innings[0].currentBatsmanIds).toEqual([p2.id, p1.id])
+    expect(store.deleteEvent(swap!.id).ok).toBe(true)
+    expect(useMatchStore.getState().innings[0].currentBatsmanIds).toEqual([p1.id, p2.id])
+  })
+
+  it('rejects deleting a wicket needed for a later dismissal', () => {
+    setupTestMatch()
+    const store = useMatchStore.getState()
+    const match = store.match!
+    const [p1, p2, p3, p4] = match.team1.players
+    store.selectOpeningBatsmen(p1.id, p2.id)
+    store.selectBowler(match.team2.players[0].id)
+    store.recordWicket('bowled', p1.id, p3.id)
+    store.recordWicket('bowled', p3.id, p4.id)
+    const before = useMatchStore.getState().innings[0]
+    const firstWicketId = before.events?.find((event) => event.type === 'ball')?.id
+    const result = store.deleteEvent(firstWicketId!)
+    expect(result.ok).toBe(false)
+    expect(result.error).toBeTruthy()
+    expect(useMatchStore.getState().innings[0].events).toEqual(before.events)
+  })
+
+  it('rejects deleting openers; deleting a live second-innings event leaves the first innings intact', () => {
+    setupTestMatch(1, 3)
+    let store = useMatchStore.getState()
+    let match = store.match!
+    store.selectOpeningBatsmen(match.team1.players[0].id, match.team1.players[1].id)
+    const openerId = useMatchStore.getState().innings[0].events?.[0].id
+    expect(store.deleteEvent(openerId!).ok).toBe(false)
+    store.endInningsEarly()
+    const endEventId = useMatchStore.getState().innings[0].events?.find((event) => event.type === 'endInnings')?.id
+    expect(store.deleteEvent(endEventId!).ok).toBe(false)
+    store.startSecondInnings()
+    store = useMatchStore.getState()
+    match = store.match!
+    const firstInningsEvents = store.innings[0].events
+    store.selectOpeningBatsmen(match.team2.players[0].id, match.team2.players[1].id)
+    store.selectBowler(match.team1.players[0].id)
+    store.recordRun(0)
+    const secondBallId = useMatchStore.getState().innings[1].events?.find((event) => event.type === 'ball')?.id
+    expect(store.deleteEvent(secondBallId!).ok).toBe(true)
+    expect(useMatchStore.getState().innings[0].events).toEqual(firstInningsEvents)
+  })
+
+  it('undo after deletion removes the new last event and redo restores it; deletion does not add redo history', () => {
+    setupTestMatch()
+    let store = useMatchStore.getState()
+    let match = store.match!
+    store.selectOpeningBatsmen(match.team1.players[0].id, match.team1.players[1].id)
+    store.selectBowler(match.team2.players[0].id)
+    store.recordRun(1)
+    store.recordRun(2)
+    let events = useMatchStore.getState().innings[0].events!
+    const firstBallId = events.find((event) => event.type === 'ball')!.id
+    expect(store.deleteEvent(firstBallId).ok).toBe(true)
+    store.undoLastBall()
+    expect(useMatchStore.getState().innings[0].events?.filter((event) => event.type === 'ball')).toHaveLength(0)
+    store.redoLastBall()
+    expect(useMatchStore.getState().innings[0].events?.filter((event) => event.type === 'ball')).toHaveLength(1)
+
+    setupTestMatch()
+    store = useMatchStore.getState()
+    match = store.match!
+    store.selectOpeningBatsmen(match.team1.players[0].id, match.team1.players[1].id)
+    store.selectBowler(match.team2.players[0].id)
+    store.recordRun(1)
+    store.recordRun(2)
+    events = useMatchStore.getState().innings[0].events!
+    const deletableBallId = events.find((event) => event.type === 'ball')!.id
+    store.undoLastBall()
+    expect(useMatchStore.getState().redoStack).toHaveLength(1)
+    expect(store.deleteEvent(deletableBallId).ok).toBe(true)
+    expect(useMatchStore.getState().redoStack).toEqual([])
+  })
+
   it('recordDelivery creates one no-ball event with bat runs and a free hit', () => {
     setupTestMatch()
     const store = useMatchStore.getState()
