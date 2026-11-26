@@ -509,19 +509,24 @@ export function deriveInnings(
         currentPartnership = { runs: 0, balls: 0 }
 
         // Rule 9: The dismissed batter is replaced IN PLACE by newBatterId
+        const incomingId = validWicket.newBatterId
+        const invalidIncoming = !!incomingId && (
+          incomingId === strikerId || incomingId === nonStrikerId || batting[incomingId]?.status === 'out'
+        )
+        if (invalidIncoming) errors.push('batter cannot come in')
         if (validWicket.outId === strikerId) {
-          if (validWicket.newBatterId && batting[validWicket.newBatterId]?.status !== 'out') {
-            strikerId = validWicket.newBatterId
-            setBattingStatus(validWicket.newBatterId)
+          if (incomingId && !invalidIncoming) {
+            strikerId = incomingId
+            setBattingStatus(incomingId)
             needsNewBatter = false
           } else {
             strikerId = null
             needsNewBatter = true
           }
         } else if (validWicket.outId === nonStrikerId) {
-          if (validWicket.newBatterId && batting[validWicket.newBatterId]?.status !== 'out') {
-            nonStrikerId = validWicket.newBatterId
-            setBattingStatus(validWicket.newBatterId)
+          if (incomingId && !invalidIncoming) {
+            nonStrikerId = incomingId
+            setBattingStatus(incomingId)
             needsNewBatter = false
           } else {
             nonStrikerId = null

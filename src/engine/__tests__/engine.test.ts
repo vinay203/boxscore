@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { allowedWicketKinds, deriveInnings } from '../deriveInnings'
 import { getResultText } from '../result'
+import { buildBallFromEditor } from '../ballEditor'
 import { defaultRules, type InningsContext, type InningsEvent, type WicketKind } from '../types'
 
 function makeCtx(overrides?: Partial<InningsContext>): InningsContext {
@@ -30,6 +31,41 @@ function makeCtx(overrides?: Partial<InningsContext>): InningsContext {
 }
 
 describe('Cricket Scoring Engine (pure TypeScript)', () => {
+  it('buildBallFromEditor maps all delivery choices and validates byes', () => {
+    const base = { runs: 3, bowlerId: 'bw1' }
+    const cases = [
+      ['legal', 'legal', 3, 0, 0, 0],
+      ['wide', 'wide', 0, 0, 0, 3],
+      ['noBall', 'noBall', 3, 0, 0, 0],
+      ['bye', 'legal', 0, 3, 0, 0],
+      ['legBye', 'legal', 0, 0, 3, 0],
+      ['noBallBye', 'noBall', 0, 3, 0, 0],
+      ['noBallLegBye', 'noBall', 0, 0, 3, 0],
+    ] as const
+    for (const [choice, delivery, batRuns, byeRuns, legByeRuns, wideExtraRuns] of cases) {
+      const result = buildBallFromEditor({ ...base, choice })
+      expect('ball' in result && result.ball).toMatchObject({
+        type: 'ball', delivery, batRuns, byeRuns, legByeRuns, wideExtraRuns,
+      })
+    }
+    for (const choice of ['bye', 'legBye', 'noBallBye', 'noBallLegBye'] as const) {
+      expect(buildBallFromEditor({ ...base, choice, runs: 0 })).toEqual({ error: 'Byes need at least 1 run' })
+    }
+  })
+
+  it('buildBallFromEditor clears runs for no-run wickets and preserves bouncer', () => {
+    const kinds: WicketKind[] = ['bowled', 'caught', 'lbw', 'stumped', 'hitWicket']
+    for (const kind of kinds) {
+      const result = buildBallFromEditor({
+        choice: 'legal', runs: 4, bowlerId: 'bw1', bouncer: true,
+        wicket: { kind, outId: 'b1' }, id: 'event-1',
+      })
+      expect('ball' in result && result.ball).toMatchObject({
+        type: 'ball', id: 'event-1', batRuns: 0, byeRuns: 0, legByeRuns: 0, wideExtraRuns: 0, bouncer: true,
+      })
+    }
+  })
+
   it('allowedWicketKinds covers the delivery and free-hit matrix', () => {
     const ordinary: WicketKind[] = ['bowled', 'caught', 'lbw', 'stumped', 'hitWicket', 'runOut', 'obstructingField', 'hitBallTwice']
     const wide: WicketKind[] = ['stumped', 'hitWicket', 'runOut', 'obstructingField', 'hitBallTwice']
@@ -343,6 +379,27 @@ describe('Cricket Scoring Engine (pure TypeScript)', () => {
     ], makeCtx())
     expect(result.batting.b1.status).toBe('out')
     expect(result.errors).toContain('A dismissed batter cannot return to the crease')
+  })
+
+  it('rejects a wicket replacement at the other end or a previously dismissed batter', () => {
+    const prefix: InningsEvent[] = [
+      { id: 'open', type: 'openers', strikerId: 'b1', nonStrikerId: 'b2' },
+      { id: 'first', type: 'ball', bowlerId: 'bw1', delivery: 'legal', batRuns: 0, byeRuns: 0, legByeRuns: 0, wideExtraRuns: 0,
+        wicket: { kind: 'bowled', outId: 'b1', newBatterId: 'b3' } },
+    ]
+    const otherEnd = deriveInnings([...prefix, {
+      id: 'second', type: 'ball', bowlerId: 'bw1', delivery: 'legal', batRuns: 0, byeRuns: 0, legByeRuns: 0, wideExtraRuns: 0,
+      wicket: { kind: 'runOut', outId: 'b2', newBatterId: 'b3' },
+    }], makeCtx())
+    expect(otherEnd.errors).toContain('batter cannot come in')
+    expect(otherEnd.needsNewBatter).toBe(true)
+
+    const dismissed = deriveInnings([...prefix, {
+      id: 'second', type: 'ball', bowlerId: 'bw1', delivery: 'legal', batRuns: 0, byeRuns: 0, legByeRuns: 0, wideExtraRuns: 0,
+      wicket: { kind: 'runOut', outId: 'b2', newBatterId: 'b1' },
+    }], makeCtx())
+    expect(dismissed.errors).toContain('batter cannot come in')
+    expect(dismissed.needsNewBatter).toBe(true)
   })
 
   // Test 6

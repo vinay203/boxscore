@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import { deriveForInnings } from '../adapter'
 import { getInningsSummary, getMatchResultFromState, getPlayerOfTheMatch } from '../views'
+import { buildBallFromEditor } from '../ballEditor'
 import { useMatchStore } from '../../store/matchStore'
 import { migrateLegacyInnings } from '../../store/persistence'
 import type { Ball, Innings, Match, Team, WicketType } from '../../types'
@@ -483,6 +484,88 @@ describe('Store & Engine Integration (Task 4)', () => {
     expect(useMatchStore.getState().editOpeners(third.id, second.id).ok).toBe(true)
     expect(useMatchStore.getState().innings[0]!.events![0]).toEqual({ ...original, strikerId: third.id })
     expect(useMatchStore.getState().editOpeners(third.id, third.id).ok).toBe(false)
+  })
+
+  it('editing a dot with typed and untyped editor payloads preserves its ball event and order', () => {
+    setupTestMatch()
+    const store = useMatchStore.getState()
+    const match = store.match!
+    store.selectOpeningBatsmen(match.team1.players[0].id, match.team1.players[1].id)
+    store.selectBowler(match.team2.players[0].id)
+    store.recordRun(0)
+    store.recordRun(1)
+    let events = useMatchStore.getState().innings[0]!.events!
+    const dot = events.find((event) => event.type === 'ball')
+    if (!dot || dot.type !== 'ball') throw new Error('Expected dot ball')
+    const built = buildBallFromEditor({ choice: 'legal', runs: 4, bowlerId: dot.bowlerId, id: dot.id })
+    if ('error' in built) throw new Error(built.error)
+    expect(useMatchStore.getState().editEvent(dot.id, built.ball).ok).toBe(true)
+    expect(getInningsSummary(match, useMatchStore.getState().innings, 0).runs).toBe(5)
+    let derived = deriveForInnings(match, useMatchStore.getState().innings, 0)
+    expect(derived.score.legalBalls).toBe(2)
+    events = useMatchStore.getState().innings[0]!.events!
+    expect(events.map((event) => event.id)).toEqual([events[0]!.id, dot.id, events[2]!.id])
+    const withoutType = {
+      id: built.ball.id,
+      bowlerId: built.ball.bowlerId,
+      delivery: built.ball.delivery,
+      batRuns: built.ball.batRuns,
+      byeRuns: built.ball.byeRuns,
+      legByeRuns: built.ball.legByeRuns,
+      wideExtraRuns: built.ball.wideExtraRuns,
+      ...(built.ball.bouncer ? { bouncer: true } : {}),
+      ...(built.ball.wicket ? { wicket: built.ball.wicket } : {}),
+    }
+    expect(useMatchStore.getState().editEvent(dot.id, { ...withoutType, id: dot.id }).ok).toBe(true)
+    events = useMatchStore.getState().innings[0]!.events!
+    expect(events[1]).toMatchObject({ id: dot.id, type: 'ball', batRuns: 4 })
+    derived = deriveForInnings(match, useMatchStore.getState().innings, 0)
+    expect(derived.score.runs).toBe(5)
+    expect(derived.score.legalBalls).toBe(2)
+  })
+
+  it('rejects batting-team bowlers for ball edits and insertions', () => {
+    setupTestMatch()
+    const store = useMatchStore.getState()
+    const match = store.match!
+    store.selectOpeningBatsmen(match.team1.players[0].id, match.team1.players[1].id)
+    store.selectBowler(match.team2.players[0].id)
+    store.recordRun(0)
+    const event = useMatchStore.getState().innings[0]!.events!.find((item) => item.type === 'ball')
+    if (!event || event.type !== 'ball') throw new Error('Expected ball')
+    const wrongBowler = match.team1.players[2].id
+    expect(useMatchStore.getState().editEvent(event.id, { ...event, bowlerId: wrongBowler }).error)
+      .toBe('Bowler must be from the bowling team')
+    expect(useMatchStore.getState().insertEvent(event.id, {
+      bowlerId: wrongBowler, delivery: 'legal', batRuns: 0, byeRuns: 0, legByeRuns: 0, wideExtraRuns: 0,
+    }).error).toBe('Bowler must be from the bowling team')
+  })
+
+  it('rejects wicket edits that bring back the other batter or a dismissed batter', () => {
+    setupTestMatch(6, 4)
+    let store = useMatchStore.getState()
+    const match = store.match!
+    const [b1, b2, b3, b4] = match.team1.players
+    store.selectOpeningBatsmen(b1.id, b2.id)
+    store.selectBowler(match.team2.players[0].id)
+    store.recordWicket('bowled', b1.id, b3.id)
+    let wicketEvent = useMatchStore.getState().innings[0]!.events!.find((event) => event.type === 'ball')
+    if (!wicketEvent || wicketEvent.type !== 'ball' || !wicketEvent.wicket) throw new Error('Expected wicket ball')
+    expect(useMatchStore.getState().editEvent(wicketEvent.id, {
+      ...wicketEvent, wicket: { ...wicketEvent.wicket, newBatterId: b2.id },
+    }).ok).toBe(false)
+
+    store = useMatchStore.getState()
+    store.recordWicket('runOut', b2.id, b4.id)
+    store.recordWicket('bowled', b3.id, '')
+    const events = useMatchStore.getState().innings[0]!.events!
+    wicketEvent = events.filter((event) => event.type === 'ball').at(-1)
+    if (!wicketEvent || wicketEvent.type !== 'ball' || !wicketEvent.wicket) throw new Error('Expected final wicket ball')
+    const invalidReturn = useMatchStore.getState().editEvent(wicketEvent.id, {
+      ...wicketEvent, wicket: { ...wicketEvent.wicket, newBatterId: b1.id },
+    })
+    expect(invalidReturn.ok).toBe(false)
+    expect(invalidReturn.error).toBe('batter cannot come in')
   })
 
   // 1. Select opening batsmen (players 3 and 4), score 1, score 0, score 4, then 3 undos.

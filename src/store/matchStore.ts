@@ -55,7 +55,7 @@ interface EventActionResult {
   error?: string
 }
 
-function sparseBallInput(ball: Extract<InningsEvent, { type: 'ball' }>): BallInput {
+function sparseBallInput(ball: Omit<BallEvent, 'type'>): BallInput {
   return {
     delivery: ball.delivery,
     ...(ball.batRuns !== 0 ? { batRuns: ball.batRuns } : {}),
@@ -127,7 +127,7 @@ interface AppStore extends MatchState {
   undoLastBall: () => void
   redoLastBall: () => void
   deleteEvent: (eventId: string) => { ok: boolean; error?: string }
-  editEvent: (eventId: string, replacement: BallEvent) => EventActionResult
+  editEvent: (eventId: string, replacement: Omit<BallEvent, 'type'>) => EventActionResult
   insertEvent: (afterEventId: string | null, ball: NewBallEvent) => EventActionResult
   editOpeners: (strikerId: string, nonStrikerId: string) => EventActionResult
   startSecondInnings: () => void
@@ -893,12 +893,15 @@ export const useMatchStore = create<AppStore>((set, get) => ({
     if (index < 0 || events[index].type !== 'ball') {
       return { ok: false, error: 'Ball not found in this innings' }
     }
-    if (replacement.id !== eventId) return { ok: false, error: 'Edited ball must keep its event ID' }
+    const bowlingTeam = current.bowlingTeamId === match.team1.id ? match.team1 : match.team2
+    if (!bowlingTeam.players.some((player) => player.id === replacement.bowlerId)) {
+      return { ok: false, error: 'Bowler must be from the bowling team' }
+    }
     const context = getBallContextBefore(match, innings, currentInningsIndex, events.slice(0, index))
     const validationError = validateBallInput(sparseBallInput(replacement), context)
     if (validationError) return { ok: false, error: validationError }
     const updatedEvents = [...events]
-    updatedEvents[index] = replacement
+    updatedEvents[index] = { ...replacement, type: 'ball', id: eventId }
     const engineError = firstNewEngineError(match, innings, currentInningsIndex, updatedEvents)
     if (engineError) return { ok: false, error: engineError }
     const recomputed = recomputeEventChange(match, innings, currentInningsIndex, updatedEvents)
@@ -914,6 +917,10 @@ export const useMatchStore = create<AppStore>((set, get) => ({
     if (!match) return { ok: false, error: 'No active match' }
     const current = innings[currentInningsIndex]
     const events = current.events ?? []
+    const bowlingTeam = current.bowlingTeamId === match.team1.id ? match.team1 : match.team2
+    if (!bowlingTeam.players.some((player) => player.id === ball.bowlerId)) {
+      return { ok: false, error: 'Bowler must be from the bowling team' }
+    }
     const openerIndex = events.findIndex((event) => event.type === 'openers')
     const anchorIndex = afterEventId === null
       ? openerIndex

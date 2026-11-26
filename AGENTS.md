@@ -1,1 +1,1 @@
-Read docs/SPEC.md before every task and follow it. Make minimal edits; do not rewrite whole files.
+Read docs/SPEC.md before every task and follow it. Make minimal edits; do not rewrite whole files.git add -A

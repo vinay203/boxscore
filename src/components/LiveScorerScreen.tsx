@@ -23,29 +23,19 @@ import {
   getInningsSummary,
   getInningsContext,
   getAvailableBattersAt,
+  DISMISSAL_TYPES,
   getLastBowlerId,
   getRequiredInfo,
   type DerivedBall,
 } from '../engine'
 import type { ExtraType, Team, WicketType } from '../types'
-import type { InningsEvent, WicketKind } from '../engine/types'
+import type { InningsEvent } from '../engine/types'
 import {
   getPlayerById,
   getPlayerName,
   getTeamById,
   vibrate,
 } from '../utils/cricket'
-
-const DISMISSAL_TYPES: { type: WicketKind; label: string }[] = [
-  { type: 'bowled', label: 'Bowled' },
-  { type: 'caught', label: 'Caught' },
-  { type: 'runOut', label: 'Run Out' },
-  { type: 'lbw', label: 'LBW' },
-  { type: 'stumped', label: 'Stumped' },
-  { type: 'hitWicket', label: 'Hit Wicket' },
-  { type: 'obstructingField', label: 'Obstructing Field' },
-  { type: 'hitBallTwice', label: 'Hit Ball Twice' },
-]
 
 function getBallDotText(ball: DerivedBall): string {
   if (ball.delivery === 'wide') return `Wd${ball.wideExtraRuns || ''}${ball.wicket ? 'W' : ''}`
@@ -87,7 +77,7 @@ interface OpeningBatsmenSheetProps {
   open: boolean
   onClose: () => void
   battingTeam: Team
-  onConfirm: (strikerId: string, nonStrikerId: string) => void
+  onConfirm: (strikerId: string, nonStrikerId: string) => { ok: boolean; error?: string } | void
   initialStrikerId?: string
   initialNonStrikerId?: string
 }
@@ -99,18 +89,20 @@ function OpeningBatsmenForm({
   initialNonStrikerId,
 }: {
   battingTeam: Team
-  onConfirm: (strikerId: string, nonStrikerId: string) => void
+  onConfirm: (strikerId: string, nonStrikerId: string) => { ok: boolean; error?: string } | void
   initialStrikerId?: string
   initialNonStrikerId?: string
 }) {
   const [selectedStriker, setSelectedStriker] = useState(initialStrikerId ?? battingTeam.players[0]?.id ?? '')
   const [selectedNonStriker, setSelectedNonStriker] = useState(initialNonStrikerId ?? battingTeam.players[1]?.id ?? '')
+  const [error, setError] = useState('')
 
   const handleConfirm = () => {
     const s = selectedStriker || battingTeam.players[0]?.id || ''
     const ns = selectedNonStriker || battingTeam.players[1]?.id || ''
     if (!s || !ns || s === ns) return
-    onConfirm(s, ns)
+    const result = onConfirm(s, ns)
+    setError(result && !result.ok ? result.error ?? 'Could not edit openers' : '')
   }
 
   return (
@@ -149,6 +141,7 @@ function OpeningBatsmenForm({
           ))}
         </div>
       </div>
+      {error && <p className="text-sm text-red-600">{error}</p>}
       <Button fullWidth onClick={handleConfirm}>
         Confirm Opening Batsmen
       </Button>
@@ -255,6 +248,7 @@ export function LiveScorerScreen() {
   const openInsertEditor = (afterEventId: string | null, index: number) => {
     const lastBowler = [...(current?.events ?? [])].slice(0, index).reverse().find((event) => event.type === 'ball')
     setBallEditor({ mode: 'insert', eventId: afterEventId ?? undefined, index, initial: {
+      type: 'ball',
       bowlerId: lastBowler?.type === 'ball' ? lastBowler.bowlerId : current?.currentBowlerId ?? '',
       delivery: 'legal', batRuns: 0, byeRuns: 0, legByeRuns: 0, wideExtraRuns: 0,
     } })
@@ -823,9 +817,9 @@ export function LiveScorerScreen() {
         availableBatters={getAvailableBattersAt(current.events ?? [], getInningsContext(match, innings, currentInningsIndex), ballEditor.index)}
         onClose={() => { setBallEditor(null); setDeleteConfirmId(null); setDeleteError(''); setBallLogOpen(true) }}
         onSave={(ball) => {
-          const payload = { ...ball, ...(ball.id ? {} : {}) }
+          const payload = ball
           const result = ballEditor.mode === 'edit'
-            ? editEvent(ballEditor.eventId ?? '', payload as Extract<InningsEvent, { type: 'ball' }>)
+            ? editEvent(ballEditor.eventId ?? '', { ...payload, id: ballEditor.eventId ?? '' })
             : insertEvent(ballEditor.eventId ?? null, {
                 bowlerId: payload.bowlerId,
                 delivery: payload.delivery,
@@ -833,6 +827,7 @@ export function LiveScorerScreen() {
                 byeRuns: payload.byeRuns,
                 legByeRuns: payload.legByeRuns,
                 wideExtraRuns: payload.wideExtraRuns,
+                ...(payload.bouncer ? { bouncer: true } : {}),
                 ...(payload.wicket ? { wicket: payload.wicket } : {}),
               })
           if (result.ok) { setBallEditor(null); setDeleteConfirmId(null); setDeleteError(''); setBallLogOpen(true) }
@@ -850,6 +845,7 @@ export function LiveScorerScreen() {
         onConfirm={(s, ns) => {
           const result = editOpeners(s, ns)
           if (result.ok) { setEditOpenersOpen(false); setBallLogOpen(true) }
+          return result
         }}
       />
 
