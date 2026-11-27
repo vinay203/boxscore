@@ -11,7 +11,10 @@ import {
 import toast from 'react-hot-toast'
 import type { CompletedMatchSummary, Match, Innings } from '../types'
 import { Card } from './ui/Card'
+import { Button } from './ui/Button'
+import { BottomSheet } from './ui/BottomSheet'
 import { ScorecardScreen } from './ScorecardScreen'
+import { useMatchStore } from '../store/matchStore'
 import {
   deriveForInnings,
   formatScore,
@@ -38,6 +41,10 @@ export function MatchHistoryDetailScreen({
   const [activeInningsTab, setActiveInningsTab] = useState<number>(0)
   const [activeViewMode, setActiveViewMode] = useState<'scorecard' | 'timeline' | 'squads'>('scorecard')
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
+  const [showReopenConfirm, setShowReopenConfirm] = useState(false)
+  const [reopenError, setReopenError] = useState('')
+  const reopenFinishedMatch = useMatchStore((state) => state.reopenFinishedMatch)
+  const matchInProgress = useMatchStore((state) => state.hasResumableMatch())
 
   const match = summary.match
   const rawInnings = summary.innings
@@ -48,6 +55,16 @@ export function MatchHistoryDetailScreen({
           migrateLegacyInnings(inn, match, rawInnings, idx),
         )
       : []
+  const hasReopenableEvents = !!rawInnings?.[0]?.events?.length && !!rawInnings?.[1]?.events?.length
+
+  const confirmReopen = () => {
+    const result = reopenFinishedMatch(summary.id)
+    if (!result.ok) {
+      setReopenError(result.error ?? 'Could not reopen match')
+      return
+    }
+    setShowReopenConfirm(false)
+  }
 
   const formattedDate = new Date(summary.date).toLocaleDateString(undefined, {
     weekday: 'short',
@@ -96,6 +113,7 @@ export function MatchHistoryDetailScreen({
         </button>
 
         <div className="flex items-center gap-2">
+          {hasReopenableEvents && <Button variant="secondary" disabled={matchInProgress} onClick={() => { setReopenError(''); setShowReopenConfirm(true) }}>Reopen match</Button>}
           <button
             type="button"
             onClick={handleShare}
@@ -114,6 +132,7 @@ export function MatchHistoryDetailScreen({
           </button>
         </div>
       </div>
+      {hasReopenableEvents && matchInProgress && <p className="text-xs text-gray-500 mb-3">Finish or discard the match in progress first</p>}
 
       {/* Delete Confirmation Modal / Prompt */}
       {showDeleteConfirm && (
@@ -309,6 +328,14 @@ export function MatchHistoryDetailScreen({
           )}
         </>
       )}
+      <BottomSheet open={showReopenConfirm} onClose={() => setShowReopenConfirm(false)} title="Reopen match">
+        <p className="text-sm mb-4" style={{ color: '#555' }}>Reopen this match? The last ball will be undone so you can fix it. It is removed from History until you finish it again.</p>
+        {reopenError && <p className="text-sm text-red-600 mb-3">{reopenError}</p>}
+        <div className="flex gap-2">
+          <Button fullWidth onClick={confirmReopen}>Reopen</Button>
+          <Button fullWidth variant="secondary" onClick={() => setShowReopenConfirm(false)}>Cancel</Button>
+        </div>
+      </BottomSheet>
     </div>
   )
 }

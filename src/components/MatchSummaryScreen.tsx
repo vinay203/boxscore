@@ -3,6 +3,7 @@ import { ChevronDown, ChevronUp, Share2, Trophy } from 'lucide-react'
 import { Button } from './ui/Button'
 import { Card } from './ui/Card'
 import { PageTransition } from './ui/PageTransition'
+import { BottomSheet } from './ui/BottomSheet'
 import { ScorecardScreen } from './ScorecardScreen'
 import { useMatchStore } from '../store/matchStore'
 import {
@@ -13,13 +14,29 @@ import {
 import { getTeamById } from '../utils/cricket'
 
 export function MatchSummaryScreen() {
-  const { match, innings, resetToHome } = useMatchStore()
+  const { match, innings, resetToHome, matchHistory, reopenFinishedMatch } = useMatchStore()
   const [expandedInnings, setExpandedInnings] = useState<number | null>(null)
+  const [reopenOpen, setReopenOpen] = useState(false)
+  const [reopenError, setReopenError] = useState('')
 
   if (!match) return null
 
   const result = getMatchResultFromState(match, innings)
   const potm = getPlayerOfTheMatch(match, innings)
+  const finishedHistoryId = matchHistory.find((entry) =>
+    entry.match?.team1.id === match.team1.id && entry.match.team2.id === match.team2.id &&
+    JSON.stringify(entry.innings) === JSON.stringify(innings),
+  )?.id
+
+  const confirmReopen = () => {
+    if (!finishedHistoryId) return
+    const result = reopenFinishedMatch(finishedHistoryId)
+    if (!result.ok) {
+      setReopenError(result.error ?? 'Could not reopen match')
+      return
+    }
+    setReopenOpen(false)
+  }
 
   const shareScore = async () => {
     const team1Idx = innings.findIndex((i) => i.battingTeamId === match.team1.id)
@@ -131,7 +148,16 @@ export function MatchSummaryScreen() {
         >
           <Share2 size={16} /> Share Score
         </Button>
+        {finishedHistoryId && <Button fullWidth variant="secondary" onClick={() => { setReopenError(''); setReopenOpen(true) }}>Reopen match</Button>}
       </div>
+      <BottomSheet open={reopenOpen} onClose={() => setReopenOpen(false)} title="Reopen match">
+        <p className="text-sm mb-4" style={{ color: '#555' }}>Reopen this match? The last ball will be undone so you can fix it. It is removed from History until you finish it again.</p>
+        {reopenError && <p className="text-sm text-red-600 mb-3">{reopenError}</p>}
+        <div className="flex gap-2">
+          <Button fullWidth onClick={confirmReopen}>Reopen</Button>
+          <Button fullWidth variant="secondary" onClick={() => setReopenOpen(false)}>Cancel</Button>
+        </div>
+      </BottomSheet>
     </PageTransition>
   )
 }

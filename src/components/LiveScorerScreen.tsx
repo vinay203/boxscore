@@ -80,6 +80,7 @@ interface OpeningBatsmenSheetProps {
   onConfirm: (strikerId: string, nonStrikerId: string) => { ok: boolean; error?: string } | void
   initialStrikerId?: string
   initialNonStrikerId?: string
+  onBackToInningsBreak?: () => void
 }
 
 function OpeningBatsmenForm({
@@ -87,11 +88,13 @@ function OpeningBatsmenForm({
   onConfirm,
   initialStrikerId,
   initialNonStrikerId,
+  onBackToInningsBreak,
 }: {
   battingTeam: Team
   onConfirm: (strikerId: string, nonStrikerId: string) => { ok: boolean; error?: string } | void
   initialStrikerId?: string
   initialNonStrikerId?: string
+  onBackToInningsBreak?: () => void
 }) {
   const [selectedStriker, setSelectedStriker] = useState(initialStrikerId ?? battingTeam.players[0]?.id ?? '')
   const [selectedNonStriker, setSelectedNonStriker] = useState(initialNonStrikerId ?? battingTeam.players[1]?.id ?? '')
@@ -142,6 +145,7 @@ function OpeningBatsmenForm({
         </div>
       </div>
       {error && <p className="text-sm text-red-600">{error}</p>}
+      {onBackToInningsBreak && <button type="button" onClick={onBackToInningsBreak} className="text-xs text-gray-500 underline">Back to innings break</button>}
       <Button fullWidth onClick={handleConfirm}>
         Confirm Opening Batsmen
       </Button>
@@ -156,6 +160,7 @@ function OpeningBatsmenSheet({
   onConfirm,
   initialStrikerId,
   initialNonStrikerId,
+  onBackToInningsBreak,
 }: OpeningBatsmenSheetProps) {
   return (
     <BottomSheet
@@ -163,7 +168,7 @@ function OpeningBatsmenSheet({
       onClose={onClose}
       title="Select Opening Batsmen"
     >
-      <OpeningBatsmenForm key={`${initialStrikerId ?? ''}-${initialNonStrikerId ?? ''}`} battingTeam={battingTeam} onConfirm={onConfirm} initialStrikerId={initialStrikerId} initialNonStrikerId={initialNonStrikerId} />
+      <OpeningBatsmenForm key={`${initialStrikerId ?? ''}-${initialNonStrikerId ?? ''}`} battingTeam={battingTeam} onConfirm={onConfirm} initialStrikerId={initialStrikerId} initialNonStrikerId={initialNonStrikerId} onBackToInningsBreak={onBackToInningsBreak} />
     </BottomSheet>
   )
 }
@@ -448,6 +453,7 @@ export function LiveScorerScreen() {
           <p className="text-sm mt-1" style={{ color: '#888' }}>Target: {score + 1} runs</p>
         </Card>
         <ScorecardScreen embedded />
+        <Button fullWidth variant="secondary" className="mt-4" onClick={undoLastBall}>Undo last ball</Button>
         <Button fullWidth className="mt-4" onClick={startSecondInnings}>Start 2nd Innings</Button>
       </PageTransition>
     )
@@ -619,6 +625,7 @@ export function LiveScorerScreen() {
         onClose={cancelBatsmanSelection}
         battingTeam={battingTeam}
         onConfirm={selectOpeningBatsmen}
+        onBackToInningsBreak={currentInningsIndex === 1 && !(current.events ?? []).some((event) => event.type === 'ball') ? undoLastBall : undefined}
       />
 
       {/* Bowler selection sheet */}

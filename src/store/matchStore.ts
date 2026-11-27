@@ -128,6 +128,7 @@ interface AppStore extends MatchState {
   undoLastBall: () => void
   redoLastBall: () => void
   deleteEvent: (eventId: string) => { ok: boolean; error?: string }
+  reopenFinishedMatch: (historyId: string) => EventActionResult
   editEvent: (eventId: string, replacement: Omit<BallEvent, 'type'>) => EventActionResult
   insertEvent: (afterEventId: string | null, ball: NewBallEvent) => EventActionResult
   editOpeners: (strikerId: string, nonStrikerId: string) => EventActionResult
@@ -917,6 +918,42 @@ export const useMatchStore = create<AppStore>((set, get) => ({
     const { match, innings, currentInningsIndex } = state
     if (!match) return
 
+    if (state.matchStatus === 'innings_break') {
+      const firstInnings = innings[0]
+      const events = firstInnings?.events ?? []
+      let lastIndex = -1
+      for (let i = events.length - 1; i >= 0; i--) {
+        if (events[i].type !== 'openers') {
+          lastIndex = i
+          break
+        }
+      }
+      if (lastIndex < 0) return
+      const removedEvent = events[lastIndex]
+      const recomputed = recomputeEventChange(match, innings, 0, events.filter((_, index) => index !== lastIndex))
+      const newState: MatchState = {
+        match,
+        innings: recomputed.innings,
+        currentInningsIndex: 0,
+        matchStatus: 'live',
+      }
+      persist(newState)
+      set({ ...newState, screen: 'live', redoStack: [...state.redoStack, removedEvent] })
+      return
+    }
+
+    if (currentInningsIndex === 1 && !(innings[1]?.events ?? []).some((event) => event.type === 'ball')) {
+      const newState: MatchState = {
+        match,
+        innings: innings.slice(0, 1),
+        currentInningsIndex: 0,
+        matchStatus: 'innings_break',
+      }
+      persist(newState)
+      set({ ...newState, screen: 'live' })
+      return
+    }
+
     const current = innings[currentInningsIndex]
     const events = current.events ?? []
 
@@ -997,6 +1034,53 @@ export const useMatchStore = create<AppStore>((set, get) => ({
     persist(newState)
     set({ ...newState, redoStack: [] })
     if (recomputed.matchStatus === 'complete') get().finishMatch()
+    return { ok: true }
+  },
+
+  reopenFinishedMatch: (historyId) => {
+    const state = get()
+    const historyEntry = loadMatchHistory().find((entry) => entry.id === historyId)
+    if (!historyEntry) return { ok: false, error: 'Match not found in History' }
+    if (hasResumableMatch() || (state.match && state.matchStatus !== 'complete' && state.matchStatus !== 'setup')) {
+      return { ok: false, error: 'Finish or discard the match in progress first' }
+    }
+    if (!historyEntry.match || !historyEntry.innings || historyEntry.innings.length < 2 ||
+      !Array.isArray(historyEntry.innings[0]?.events) || !Array.isArray(historyEntry.innings[1]?.events)) {
+      return { ok: false, error: 'This History entry cannot be reopened' }
+    }
+
+    const match = JSON.parse(JSON.stringify(historyEntry.match)) as Match
+    const innings = JSON.parse(JSON.stringify(historyEntry.innings)) as Innings[]
+    const secondEvents = innings[1]!.events ?? []
+    let lastIndex = -1
+    for (let i = secondEvents.length - 1; i >= 0; i--) {
+      if (secondEvents[i].type !== 'openers') {
+        lastIndex = i
+        break
+      }
+    }
+    if (lastIndex < 0) return { ok: false, error: 'There is no second-innings ball to undo' }
+
+    const removedEvent = secondEvents[lastIndex]!
+    innings[1] = { ...innings[1]!, events: secondEvents.filter((_, index) => index !== lastIndex) }
+    const recomputed = recomputeEventChange(match, innings, 1, innings[1]!.events ?? [])
+    const newState: MatchState = {
+      match,
+      innings: recomputed.innings,
+      currentInningsIndex: 1,
+      matchStatus: 'live',
+    }
+
+    deleteFromHistory(historyId)
+    persist(newState)
+    set({
+      ...newState,
+      screen: 'live',
+      showScorecard: false,
+      selectedHistoryMatchId: null,
+      matchHistory: loadMatchHistory(),
+      redoStack: [...state.redoStack, removedEvent],
+    })
     return { ok: true }
   },
 

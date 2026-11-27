@@ -39,11 +39,190 @@ function setupTestMatch(overs = 2, wicketLimit = 3, playersPerTeam = 4) {
   useMatchStore.getState().startMatch()
 }
 
+function finishChasingMatch(firstRuns: number, chaseRuns: number[]) {
+  setupTestMatch(2, 3)
+  let store = useMatchStore.getState()
+  let match = store.match!
+  store.selectOpeningBatsmen(match.team1.players[0]!.id, match.team1.players[1]!.id)
+  store.selectBowler(match.team2.players[0]!.id)
+  if (firstRuns > 0) store.recordRun(firstRuns)
+  store.endInningsEarly()
+  store.startSecondInnings()
+  store = useMatchStore.getState()
+  match = store.match!
+  store.selectOpeningBatsmen(match.team2.players[0]!.id, match.team2.players[1]!.id)
+  store.selectBowler(match.team1.players[0]!.id)
+  chaseRuns.forEach((runs) => useMatchStore.getState().recordRun(runs))
+  return useMatchStore.getState().matchHistory[0]!
+}
+
 describe('Store & Engine Integration (Task 4)', () => {
   beforeEach(() => {
     mockStorage['boxscore_current_match'] = ''
     delete mockStorage['boxscore_current_match']
     delete mockStorage['boxscore_match_history']
+  })
+
+  it('undoes and redoes the first-innings final ball across the innings break', () => {
+    setupTestMatch(1, 3)
+    let store = useMatchStore.getState()
+    const match = store.match!
+    const [striker, nonStriker] = match.team1.players
+    const bowler = match.team2.players[0]!
+    store.selectOpeningBatsmen(striker!.id, nonStriker!.id)
+    store.selectBowler(bowler.id)
+    store.recordRun(1)
+    for (let index = 0; index < 5; index++) store.recordRun(0)
+    expect(useMatchStore.getState().matchStatus).toBe('innings_break')
+
+    store = useMatchStore.getState()
+    store.undoLastBall()
+    let state = useMatchStore.getState()
+    expect(state.matchStatus).toBe('live')
+    expect(state.currentInningsIndex).toBe(0)
+    expect(getInningsSummary(match, state.innings, 0).legalBalls).toBe(5)
+    expect(state.innings[0]!.currentBatsmanIds).toEqual([nonStriker!.id, striker!.id])
+    expect(state.innings[0]!.currentBowlerId).toBe(bowler.id)
+
+    state.redoLastBall()
+    expect(useMatchStore.getState().matchStatus).toBe('innings_break')
+    useMatchStore.getState().undoLastBall()
+    useMatchStore.getState().undoLastBall()
+    state = useMatchStore.getState()
+    expect(state.currentInningsIndex).toBe(0)
+    expect(getInningsSummary(match, state.innings, 0).legalBalls).toBe(4)
+    expect(state.redoStack).toHaveLength(2)
+  })
+
+  it('uses the corrected first-innings score as the second-innings target after an across-break undo', () => {
+    setupTestMatch(1, 3)
+    const store = useMatchStore.getState()
+    const match = store.match!
+    store.selectOpeningBatsmen(match.team1.players[0]!.id, match.team1.players[1]!.id)
+    store.selectBowler(match.team2.players[0]!.id)
+    store.recordRun(1)
+    for (let index = 0; index < 5; index++) store.recordRun(0)
+    store.undoLastBall()
+    store.recordRun(4)
+    expect(useMatchStore.getState().matchStatus).toBe('innings_break')
+    store.startSecondInnings()
+    const state = useMatchStore.getState()
+    expect(getRequiredInfo(state.match!, state.innings)?.target).toBe(6)
+  })
+
+  it('discards an unstarted second innings on undo and allows it to be started again', () => {
+    setupTestMatch()
+    let store = useMatchStore.getState()
+    const match = store.match!
+    store.selectOpeningBatsmen(match.team1.players[0]!.id, match.team1.players[1]!.id)
+    store.endInningsEarly()
+    store.startSecondInnings()
+    store = useMatchStore.getState()
+    store.selectOpeningBatsmen(match.team2.players[0]!.id, match.team2.players[1]!.id)
+    expect(useMatchStore.getState().innings[1]!.events).toHaveLength(1)
+    store.undoLastBall()
+    expect(useMatchStore.getState().matchStatus).toBe('innings_break')
+    expect(useMatchStore.getState().currentInningsIndex).toBe(0)
+    expect(useMatchStore.getState().innings).toHaveLength(1)
+    useMatchStore.getState().startSecondInnings()
+    expect(useMatchStore.getState().currentInningsIndex).toBe(1)
+    expect(useMatchStore.getState().matchStatus).toBe('live')
+  })
+
+  it('keeps openers when undo is used before any first-innings ball', () => {
+    setupTestMatch()
+    const store = useMatchStore.getState()
+    const match = store.match!
+    const openerIds = [match.team1.players[0]!.id, match.team1.players[1]!.id]
+    store.selectOpeningBatsmen(openerIds[0]!, openerIds[1]!)
+    const before = useMatchStore.getState().innings
+    store.undoLastBall()
+    expect(useMatchStore.getState().innings).toEqual(before)
+    expect(useMatchStore.getState().innings[0]!.currentBatsmanIds).toEqual(openerIds)
+  })
+
+  it('reopens a won chase, removes the history entry, and redo finishes with one history entry', () => {
+    const finished = finishChasingMatch(0, [1])
+    expect(finished).toBeDefined()
+    const originalText = finished.resultText
+    const result = useMatchStore.getState().reopenFinishedMatch(finished.id)
+    expect(result.ok).toBe(true)
+    let state = useMatchStore.getState()
+    expect(state.matchStatus).toBe('live')
+    expect(state.currentInningsIndex).toBe(1)
+    expect(state.matchHistory.some((entry) => entry.id === finished.id)).toBe(false)
+    expect(state.redoStack).toHaveLength(1)
+    expect(getInningsSummary(state.match!, state.innings, 1).runs).toBe(0)
+    state.redoLastBall()
+    state = useMatchStore.getState()
+    expect(state.matchStatus).toBe('complete')
+    expect(state.matchHistory).toHaveLength(1)
+    expect(state.matchHistory[0]!.resultText).toBe(originalText)
+  })
+
+  it('reopens, edits a chase ball, and records the corrected score when the match finishes', () => {
+    const finished = finishChasingMatch(2, [1, 2])
+    expect(useMatchStore.getState().reopenFinishedMatch(finished.id).ok).toBe(true)
+    let state = useMatchStore.getState()
+    const firstChaseBall = state.innings[1]!.events!.find((event) => event.type === 'ball')
+    if (!firstChaseBall || firstChaseBall.type !== 'ball') throw new Error('Expected a chase ball')
+    expect(state.editEvent(firstChaseBall.id, { ...firstChaseBall, batRuns: 2 }).ok).toBe(true)
+    useMatchStore.getState().recordRun(1)
+    state = useMatchStore.getState()
+    expect(state.matchStatus).toBe('complete')
+    expect(state.matchHistory).toHaveLength(1)
+    expect(state.matchHistory[0]!.team2Score).toBe('3 / 0')
+  })
+
+  it('reopening a match ending with endInnings removes that event', () => {
+    setupTestMatch()
+    let store = useMatchStore.getState()
+    let match = store.match!
+    store.selectOpeningBatsmen(match.team1.players[0]!.id, match.team1.players[1]!.id)
+    store.endInningsEarly()
+    store.startSecondInnings()
+    store = useMatchStore.getState()
+    match = store.match!
+    store.selectOpeningBatsmen(match.team2.players[0]!.id, match.team2.players[1]!.id)
+    store.endInningsEarly()
+    const finished = useMatchStore.getState().matchHistory[0]!
+    expect(finished.innings?.[1]?.events?.at(-1)?.type).toBe('endInnings')
+    expect(useMatchStore.getState().reopenFinishedMatch(finished.id).ok).toBe(true)
+    const reopened = useMatchStore.getState()
+    expect(reopened.innings[1]!.events!.some((event) => event.type === 'endInnings')).toBe(false)
+    expect(reopened.redoStack.at(-1)?.type).toBe('endInnings')
+  })
+
+  it('rejects reopening during a match, for unknown IDs, and for old entries without event logs', () => {
+    const finished = finishChasingMatch(0, [1])
+    setupTestMatch()
+    expect(useMatchStore.getState().reopenFinishedMatch(finished.id).ok).toBe(false)
+    expect(useMatchStore.getState().reopenFinishedMatch('unknown-id').ok).toBe(false)
+
+    const oldEntry = {
+      ...finished,
+      id: 'old-entry',
+      innings: finished.innings!.map((inn) =>
+        Object.fromEntries(Object.entries(inn).filter(([key]) => key !== 'events')) as Innings,
+      ),
+    }
+    mockStorage['boxscore_match_history'] = JSON.stringify([oldEntry])
+    mockStorage['boxscore_current_match'] = ''
+    useMatchStore.setState({ match: null, innings: [], matchStatus: 'setup' })
+    expect(useMatchStore.getState().reopenFinishedMatch(oldEntry.id).ok).toBe(false)
+  })
+
+  it('restores the reopened live match from storage for resume', () => {
+    const finished = finishChasingMatch(0, [1])
+    useMatchStore.getState().reopenFinishedMatch(finished.id)
+    const saved = loadCurrentMatch()
+    expect(saved?.currentInningsIndex).toBe(1)
+    expect(saved?.matchStatus).toBe('live')
+    expect(saved?.innings[1]?.events?.some((event) => event.type === 'ball')).toBe(false)
+    useMatchStore.setState({ match: null, innings: [], currentInningsIndex: 0, matchStatus: 'setup' })
+    useMatchStore.getState().initApp()
+    expect(useMatchStore.getState().matchStatus).toBe('live')
+    expect(useMatchStore.getState().currentInningsIndex).toBe(1)
   })
 
   it('adds players with unique trimmed names, updates squad size, and derives all-out from the real squad', () => {
