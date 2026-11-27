@@ -4,6 +4,8 @@ import { getInningsSummary, getMatchResultFromState, getPlayerOfTheMatch, getReq
 import { buildBallFromEditor } from '../ballEditor'
 import { useMatchStore } from '../../store/matchStore'
 import { loadCurrentMatch, migrateLegacyInnings } from '../../store/persistence'
+import { MATCH_HISTORY_KEY } from '../../store/persistence'
+import { buildBackup } from '../../store/backup'
 import type { Ball, Innings, Match, Team, WicketType } from '../../types'
 
 // Mock localStorage for node environment
@@ -144,9 +146,11 @@ describe('Store & Engine Integration (Task 4)', () => {
   it('reopens a won chase, removes the history entry, and redo finishes with one history entry', () => {
     const finished = finishChasingMatch(0, [1])
     expect(finished).toBeDefined()
+    expect(JSON.parse(mockStorage[MATCH_HISTORY_KEY]!).schemaVersion).toBe(1)
     const originalText = finished.resultText
     const result = useMatchStore.getState().reopenFinishedMatch(finished.id)
     expect(result.ok).toBe(true)
+    expect(JSON.parse(mockStorage[MATCH_HISTORY_KEY]!)).toMatchObject({ schemaVersion: 1, matches: [] })
     let state = useMatchStore.getState()
     expect(state.matchStatus).toBe('live')
     expect(state.currentInningsIndex).toBe(1)
@@ -158,6 +162,7 @@ describe('Store & Engine Integration (Task 4)', () => {
     expect(state.matchStatus).toBe('complete')
     expect(state.matchHistory).toHaveLength(1)
     expect(state.matchHistory[0]!.resultText).toBe(originalText)
+    expect(JSON.parse(mockStorage[MATCH_HISTORY_KEY]!).schemaVersion).toBe(1)
   })
 
   it('reopens, edits a chase ball, and records the corrected score when the match finishes', () => {
@@ -223,6 +228,21 @@ describe('Store & Engine Integration (Task 4)', () => {
     useMatchStore.getState().initApp()
     expect(useMatchStore.getState().matchStatus).toBe('live')
     expect(useMatchStore.getState().currentInningsIndex).toBe(1)
+  })
+
+  it('imports history backups by merging, persisting, and skipping duplicate ids', () => {
+    const finished = finishChasingMatch(0, [1])
+    const imported = [
+      { ...finished, id: 'import-newer', date: '2027-02-01T00:00:00.000Z' },
+      { ...finished, id: 'import-older', date: '2025-02-01T00:00:00.000Z' },
+    ]
+    const text = buildBackup(imported)
+    expect(useMatchStore.getState().importHistoryBackup(text)).toMatchObject({ ok: true, added: 2, skipped: 0 })
+    expect(useMatchStore.getState().matchHistory.map((entry) => entry.id)).toEqual([
+      'import-newer', finished.id, 'import-older',
+    ])
+    expect(JSON.parse(mockStorage[MATCH_HISTORY_KEY]!).schemaVersion).toBe(1)
+    expect(useMatchStore.getState().importHistoryBackup(text)).toMatchObject({ ok: true, added: 0, skipped: 2 })
   })
 
   it('adds players with unique trimmed names, updates squad size, and derives all-out from the real squad', () => {

@@ -30,9 +30,11 @@ import {
   loadCurrentMatch,
   loadMatchHistory,
   saveCurrentMatch,
+  saveMatchHistory,
   saveToHistory,
 } from './persistence'
 import { generateId } from '../utils/cricket'
+import { buildBackup, parseBackup } from './backup'
 
 interface SetupDraft {
   title: string
@@ -84,6 +86,8 @@ interface AppStore extends MatchState {
   setSetupStep: (step: 1 | 2 | 3) => void
   setShowScorecard: (show: boolean) => void
   initApp: () => void
+  exportHistoryBackup: () => string
+  importHistoryBackup: (text: string) => { ok: boolean; added?: number; skipped?: number; error?: string }
   dismissResumePrompt: () => void
   resumeMatch: () => void
   resetToHome: () => void
@@ -289,6 +293,11 @@ export const useMatchStore = create<AppStore>((set, get) => ({
   setShowScorecard: (show) => set({ showScorecard: show }),
 
   initApp: () => {
+    try {
+      void navigator.storage?.persist?.().catch(() => undefined)
+    } catch {
+      // Persistent storage is a best-effort browser request.
+    }
     const history = loadMatchHistory()
     const current = loadCurrentMatch()
     const canResume = hasResumableMatch()
@@ -306,6 +315,22 @@ export const useMatchStore = create<AppStore>((set, get) => ({
     } else {
       set({ matchHistory: history, redoStack: [] })
     }
+  },
+
+  exportHistoryBackup: () => buildBackup(get().matchHistory),
+
+  importHistoryBackup: (text) => {
+    const state = get()
+    const parsed = parseBackup(text, state.matchHistory)
+    if (!parsed.ok) return { ok: false, error: parsed.error }
+    const merged = [...parsed.added, ...state.matchHistory]
+      .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+    if (!saveMatchHistory(merged)) {
+      set({ matchHistory: merged })
+      return { ok: false, added: parsed.added.length, skipped: parsed.skipped, error: 'Could not save imported matches' }
+    }
+    set({ matchHistory: merged })
+    return { ok: true, added: parsed.added.length, skipped: parsed.skipped }
   },
 
   dismissResumePrompt: () => set({ showResumePrompt: false }),
@@ -1242,7 +1267,7 @@ export const useMatchStore = create<AppStore>((set, get) => ({
     set({
       matchStatus: 'complete',
       screen: 'summary',
-      matchHistory: loadMatchHistory(),
+      matchHistory: [summary, ...state.matchHistory.filter((entry) => entry.id !== summary.id)],
       redoStack: [],
     })
   },

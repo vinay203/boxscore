@@ -1,16 +1,59 @@
 import { syncInnings } from '../engine/adapter'
 import type { DeliveryKind, InningsEvent, Wicket, WicketKind } from '../engine/types'
 import type { CompletedMatchSummary, Innings, Match, MatchState } from '../types'
+import toast from 'react-hot-toast'
 
 export const CURRENT_MATCH_KEY = 'boxscore_current_match'
 export const MATCH_HISTORY_KEY = 'boxscore_match_history'
-export const MAX_HISTORY = 25
+const HISTORY_SCHEMA_VERSION = 1
+let storageFailureToastShown = false
 
-export function saveCurrentMatch(state: MatchState): void {
+function showStorageFailureToast(): void {
+  if (storageFailureToastShown) return
+  storageFailureToastShown = true
+  toast.error('Storage is full. Export your matches from History to keep them.')
+}
+
+function preserveCorruptData(key: string, raw: string): void {
+  try {
+    localStorage.setItem(`${key}_corrupt_${Date.now()}`, raw)
+  } catch {
+    // Recovery storage can also fail when storage is full.
+  }
+}
+
+function parseStoredHistory(raw: string | null): CompletedMatchSummary[] {
+  if (!raw) return []
+  try {
+    const stored: unknown = JSON.parse(raw)
+    if (Array.isArray(stored)) return stored as CompletedMatchSummary[]
+    if (stored && typeof stored === 'object' && Array.isArray((stored as { matches?: unknown }).matches)) {
+      return (stored as { matches: CompletedMatchSummary[] }).matches
+    }
+    preserveCorruptData(MATCH_HISTORY_KEY, raw)
+  } catch {
+    preserveCorruptData(MATCH_HISTORY_KEY, raw)
+  }
+  return []
+}
+
+function writeHistory(history: CompletedMatchSummary[]): boolean {
+  try {
+    localStorage.setItem(MATCH_HISTORY_KEY, JSON.stringify({ schemaVersion: HISTORY_SCHEMA_VERSION, matches: history }))
+    return true
+  } catch {
+    showStorageFailureToast()
+    return false
+  }
+}
+
+export function saveCurrentMatch(state: MatchState): boolean {
   try {
     localStorage.setItem(CURRENT_MATCH_KEY, JSON.stringify(state))
+    return true
   } catch {
-    // storage full or unavailable
+    showStorageFailureToast()
+    return false
   }
 }
 
@@ -150,11 +193,15 @@ export function migrateLegacyInnings(
 }
 
 export function loadCurrentMatch(): MatchState | null {
+  let raw: string | null = null
   try {
-    const raw = localStorage.getItem(CURRENT_MATCH_KEY)
+    raw = localStorage.getItem(CURRENT_MATCH_KEY)
     if (!raw) return null
     const state = JSON.parse(raw) as MatchState
-    if (!state || !state.match || !Array.isArray(state.innings)) return state
+    if (!state || !state.match || !Array.isArray(state.innings)) {
+      preserveCorruptData(CURRENT_MATCH_KEY, raw)
+      return null
+    }
 
     const needsMigration = state.innings.some((inn) => !Array.isArray(inn.events))
     if (!needsMigration) {
@@ -171,40 +218,48 @@ export function loadCurrentMatch(): MatchState | null {
       }
     } catch (migErr) {
       console.warn('Failed to migrate legacy match innings:', migErr)
+      preserveCorruptData(CURRENT_MATCH_KEY, raw)
       return null
     }
   } catch {
+    if (raw) preserveCorruptData(CURRENT_MATCH_KEY, raw)
     return null
   }
 }
 
 export function clearCurrentMatch(): void {
-  localStorage.removeItem(CURRENT_MATCH_KEY)
+  try {
+    localStorage.removeItem(CURRENT_MATCH_KEY)
+  } catch {
+    // Storage may be unavailable.
+  }
 }
 
-export function saveToHistory(summary: CompletedMatchSummary): void {
+export function saveToHistory(summary: CompletedMatchSummary): boolean {
   try {
     const raw = localStorage.getItem(MATCH_HISTORY_KEY)
-    const history: CompletedMatchSummary[] = raw ? JSON.parse(raw) : []
+    const history = parseStoredHistory(raw)
     // Remove if already exists with same id
     const filtered = history.filter((m) => m.id !== summary.id)
     filtered.unshift(summary)
-    if (filtered.length > MAX_HISTORY) {
-      filtered.splice(MAX_HISTORY)
-    }
-    localStorage.setItem(MATCH_HISTORY_KEY, JSON.stringify(filtered))
+    return writeHistory(filtered)
   } catch {
-    // ignore
+    showStorageFailureToast()
+    return false
   }
+}
+
+export function saveMatchHistory(history: CompletedMatchSummary[]): boolean {
+  return writeHistory(history)
 }
 
 export function deleteFromHistory(id: string): void {
   try {
     const raw = localStorage.getItem(MATCH_HISTORY_KEY)
     if (!raw) return
-    const history: CompletedMatchSummary[] = JSON.parse(raw)
+    const history = parseStoredHistory(raw)
     const filtered = history.filter((m) => m.id !== id)
-    localStorage.setItem(MATCH_HISTORY_KEY, JSON.stringify(filtered))
+    writeHistory(filtered)
   } catch {
     // ignore
   }
@@ -220,11 +275,18 @@ export function clearMatchHistory(): void {
 
 export function loadMatchHistory(): CompletedMatchSummary[] {
   try {
-    const raw = localStorage.getItem(MATCH_HISTORY_KEY)
-    if (!raw) return []
-    return JSON.parse(raw) as CompletedMatchSummary[]
+    return parseStoredHistory(localStorage.getItem(MATCH_HISTORY_KEY))
   } catch {
     return []
+  }
+}
+
+export function getStoredHistorySizeKB(): number {
+  try {
+    const raw = localStorage.getItem(MATCH_HISTORY_KEY) ?? ''
+    return Math.round(new TextEncoder().encode(raw).byteLength / 1024)
+  } catch {
+    return 0
   }
 }
 

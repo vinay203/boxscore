@@ -1,9 +1,11 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { ArrowLeft, ChevronRight, Trash2 } from 'lucide-react'
+import toast from 'react-hot-toast'
 import { PageTransition } from './ui/PageTransition'
 import { Card } from './ui/Card'
 import { useMatchStore } from '../store/matchStore'
 import { MatchHistoryDetailScreen } from './MatchHistoryDetailScreen'
+import { getStoredHistorySizeKB } from '../store/persistence'
 
 export function MatchHistoryScreen() {
   const {
@@ -13,9 +15,47 @@ export function MatchHistoryScreen() {
     setSelectedHistoryMatchId,
     deleteMatchFromHistory,
     clearAllMatchHistory,
+    exportHistoryBackup,
+    importHistoryBackup,
   } = useMatchStore()
 
   const [showClearConfirm, setShowClearConfirm] = useState(false)
+  const fileInput = useRef<HTMLInputElement>(null)
+
+  const exportBackup = () => {
+    const blob = new Blob([exportHistoryBackup()], { type: 'application/json' })
+    const url = URL.createObjectURL(blob)
+    const anchor = document.createElement('a')
+    anchor.href = url
+    anchor.download = `boxscore-backup-${new Date().toISOString().slice(0, 10)}.json`
+    anchor.click()
+    URL.revokeObjectURL(url)
+  }
+
+  const importBackup = async (file?: File) => {
+    if (!file) return
+    try {
+      const result = importHistoryBackup(await file.text())
+      if (result.ok) {
+        toast.success(`Added ${result.added} matches, skipped ${result.skipped} already in History`)
+      } else {
+        toast.error(result.error ?? 'Could not import backup')
+      }
+    } catch {
+      toast.error('Could not read backup file')
+    }
+    if (fileInput.current) fileInput.current.value = ''
+  }
+
+  const importButton = (
+    <button
+      type="button"
+      onClick={() => fileInput.current?.click()}
+      className="text-xs font-medium text-gray-400 hover:text-gray-900 transition-colors flex items-center gap-1 btn-press px-2 py-1"
+    >
+      Import
+    </button>
+  )
 
   // If a specific match is selected, show the full detail screen
   const selectedMatch = matchHistory.find((m) => m.id === selectedHistoryMatchId)
@@ -63,10 +103,28 @@ export function MatchHistoryScreen() {
             Match History
           </h1>
           <p className="text-xs text-gray-400 mt-0.5">
-            {matchHistory.length} completed match{matchHistory.length !== 1 ? 'es' : ''}
+            {matchHistory.length} matches saved - about {getStoredHistorySizeKB()} KB
           </p>
         </div>
+        <div className="flex items-center gap-1">
+          <button
+            type="button"
+            onClick={exportBackup}
+            className="text-xs font-medium text-gray-400 hover:text-gray-900 transition-colors flex items-center gap-1 btn-press px-2 py-1"
+          >
+            Export
+          </button>
+          {importButton}
+        </div>
       </div>
+
+      <input
+        ref={fileInput}
+        type="file"
+        accept=".json,application/json"
+        className="hidden"
+        onChange={(event) => void importBackup(event.target.files?.[0])}
+      />
 
       {/* Clear All Confirmation prompt */}
       {showClearConfirm && (
@@ -104,6 +162,7 @@ export function MatchHistoryScreen() {
           <p className="text-xs text-gray-400 max-w-xs mx-auto">
             Finish a match to see its full scoreboard, player names, and ball-by-ball history here.
           </p>
+          <div className="mt-3">{importButton}</div>
         </Card>
       ) : (
         <div className="space-y-3">
