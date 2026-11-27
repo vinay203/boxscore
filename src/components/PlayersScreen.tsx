@@ -1,7 +1,8 @@
 import { useState } from 'react'
 import { ArrowLeft, ChevronRight } from 'lucide-react'
+import toast from 'react-hot-toast'
 import type { PlayerRole, PoolPlayer } from '../types'
-import { useMatchStore } from '../store/matchStore'
+import { getNewHistoryPlayerNames, useMatchStore } from '../store/matchStore'
 import { Button } from './ui/Button'
 import { Card } from './ui/Card'
 import { Input } from './ui/Input'
@@ -39,7 +40,7 @@ function RoleChips({ value, onChange }: { value: PlayerRole | ''; onChange: (rol
 }
 
 export function PlayersScreen() {
-  const { playerPool, setScreen, addPoolPlayer, updatePoolPlayer, removePoolPlayer } = useMatchStore()
+  const { playerPool, matchHistory, setScreen, addPoolPlayer, updatePoolPlayer, removePoolPlayer, addPlayersFromHistory } = useMatchStore()
   const [name, setName] = useState('')
   const [role, setRole] = useState<PlayerRole | ''>('')
   const [error, setError] = useState('')
@@ -47,6 +48,7 @@ export function PlayersScreen() {
   const [editName, setEditName] = useState('')
   const [editRole, setEditRole] = useState<PlayerRole | ''>('')
   const [confirmDelete, setConfirmDelete] = useState(false)
+  const historyNamesToAdd = getNewHistoryPlayerNames(matchHistory, playerPool).length
 
   const openEditor = (player: PoolPlayer) => {
     setSelected(player)
@@ -99,6 +101,16 @@ export function PlayersScreen() {
           <div className="mt-3"><RoleChips value={role} onChange={setRole} /></div>
           {error && !selected && <p className="mt-2 text-xs text-red-600">{error}</p>}
         </Card>
+
+        {historyNamesToAdd > 0 && (
+          <button
+            type="button"
+            onClick={() => toast.success(`Added ${addPlayersFromHistory().added} players`)}
+            className="mb-4 text-xs font-medium text-gray-500 hover:text-gray-900 transition-colors btn-press"
+          >
+            Add players from past matches
+          </button>
+        )}
 
         {playerPool.length === 0 ? (
           <Card className="text-center py-8 px-4">

@@ -12,6 +12,7 @@ import type { BatterStatus, DerivedBall } from './types'
 export interface BattingSummaryRow {
   id: string
   name: string
+  isCaptain: boolean
   runs: number
   balls: number
   ballsFaced: number
@@ -25,6 +26,7 @@ export interface BattingSummaryRow {
 export interface BowlingSummaryRow {
   id: string
   name: string
+  isCaptain: boolean
   overs: string
   oversDisplay: string
   maidens: number
@@ -78,6 +80,7 @@ export function getInningsSummary(
     return {
       id: player.id,
       name: player.name,
+      isCaptain: player.id === battingTeam.captainId,
       runs: stats.runs,
       balls: stats.balls,
       ballsFaced: stats.balls,
@@ -108,6 +111,7 @@ export function getInningsSummary(
     return {
       id: bowlerId,
       name,
+      isCaptain: bowlerId === bowlingTeam.captainId,
       overs: stats.oversDisplay,
       oversDisplay: stats.oversDisplay,
       maidens: stats.maidens,

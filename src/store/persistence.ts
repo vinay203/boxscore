@@ -1,11 +1,12 @@
 import { syncInnings } from '../engine/adapter'
 import type { DeliveryKind, InningsEvent, Wicket, WicketKind } from '../engine/types'
-import type { CompletedMatchSummary, Innings, Match, MatchState, PoolPlayer } from '../types'
+import type { CompletedMatchSummary, Innings, Match, MatchState, PoolPlayer, SavedTeam } from '../types'
 import toast from 'react-hot-toast'
 
 export const CURRENT_MATCH_KEY = 'boxscore_current_match'
 export const MATCH_HISTORY_KEY = 'boxscore_match_history'
 export const PLAYER_POOL_KEY = 'boxscore_player_pool'
+export const SAVED_TEAMS_KEY = 'boxscore_saved_teams'
 const HISTORY_SCHEMA_VERSION = 1
 let storageFailureToastShown = false
 
@@ -315,6 +316,33 @@ export function loadPlayerPool(): PoolPlayer[] {
 export function savePlayerPool(pool: PoolPlayer[]): boolean {
   try {
     localStorage.setItem(PLAYER_POOL_KEY, JSON.stringify({ schemaVersion: HISTORY_SCHEMA_VERSION, players: pool }))
+    return true
+  } catch {
+    showStorageFailureToast()
+    return false
+  }
+}
+
+export function loadSavedTeams(): SavedTeam[] {
+  let raw: string | null = null
+  try {
+    raw = localStorage.getItem(SAVED_TEAMS_KEY)
+    if (!raw) return []
+    const stored: unknown = JSON.parse(raw)
+    if (Array.isArray(stored)) return stored as SavedTeam[]
+    if (stored && typeof stored === 'object' && Array.isArray((stored as { teams?: unknown }).teams)) {
+      return (stored as { teams: SavedTeam[] }).teams
+    }
+    preserveCorruptData(SAVED_TEAMS_KEY, raw)
+  } catch {
+    if (raw) preserveCorruptData(SAVED_TEAMS_KEY, raw)
+  }
+  return []
+}
+
+export function saveSavedTeams(teams: SavedTeam[]): boolean {
+  try {
+    localStorage.setItem(SAVED_TEAMS_KEY, JSON.stringify({ schemaVersion: HISTORY_SCHEMA_VERSION, teams }))
     return true
   } catch {
     showStorageFailureToast()

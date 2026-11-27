@@ -50,7 +50,8 @@ overs, wicketsPerInnings, playersPerTeam, freeHitAfterNoBall, freeHitAfterWide (
 [x] 5  Storage: full matches (no cap), IndexedDB or localStorage with versioning, JSON export/import,
        history list that opens the full scorecard
 [x] 6a player pool + roles + Players screen + auto-save of typed names + poolId link
-[ ] 6b saved teams + one-tap reuse in setup + captain
+[x] 6b setup: pick saved players, saved teams (one tap), captain, save team, duplicate-name block, add players from past matches
+[ ] 6c backup of teams + import re-linking of players + Teams list on the Players screen
 [ ] 7  Joker (one player on both squads; can bat / can bowl settings; shown in both scorecards)
 [ ] 8  Bouncer counter per bowler per over + max overs per bowler
 [ ] 9  Orange Cap / Purple Cap per Saturday and all-time, career stats, leaderboards

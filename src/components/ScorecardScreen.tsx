@@ -89,7 +89,7 @@ export function ScorecardScreen({
                     return (
                       <tr key={player.id} className={`${isCurrent && inningsData.status === 'live' ? 'current-batsman' : ''} ${isOut ? 'out-batsman' : ''}`}>
                         <td className="px-3 py-2">
-                          <span className={isCurrent ? 'font-bold' : ''}>{player.name}</span>
+                          <span className={isCurrent ? 'font-bold' : ''}>{player.name}{player.isCaptain ? ' (c)' : ''}</span>
                           {player.dismissalText && <p className="text-[10px]" style={{ color: '#BBB' }}>{player.dismissalText}</p>}
                         </td>
                         <td className="text-center px-2 py-2 font-semibold">{player.runs}</td>
@@ -135,7 +135,7 @@ export function ScorecardScreen({
               <tbody>
                 {summary.bowling.map((bowler) => (
                   <tr key={bowler.id} style={{ borderTop: '1px solid #F0F0F0' }}>
-                    <td className="px-3 py-2 font-medium">{bowler.name}</td>
+                    <td className="px-3 py-2 font-medium">{bowler.name}{bowler.isCaptain ? ' (c)' : ''}</td>
                     <td className="text-center px-2 py-2">{bowler.oversDisplay}</td>
                     <td className="text-center px-2 py-2">{bowler.maidens}</td>
                     <td className="text-center px-2 py-2">{bowler.runs}</td>

@@ -4,14 +4,17 @@ import {
   CURRENT_MATCH_KEY,
   MATCH_HISTORY_KEY,
   PLAYER_POOL_KEY,
+  SAVED_TEAMS_KEY,
   loadCurrentMatch,
   loadMatchHistory,
   loadPlayerPool,
+  loadSavedTeams,
   saveCurrentMatch,
   savePlayerPool,
+  saveSavedTeams,
   saveToHistory,
 } from '../persistence'
-import type { CompletedMatchSummary, PoolPlayer } from '../../types'
+import type { CompletedMatchSummary, PoolPlayer, SavedTeam } from '../../types'
 
 const data: Record<string, string> = {}
 let throwOnSet = false
@@ -118,6 +121,20 @@ describe('backup format', () => {
     throwOnSet = true
     expect(() => savePlayerPool([])).not.toThrow()
     expect(savePlayerPool([])).toBe(false)
+  })
+
+  it('loads saved teams from arrays and envelopes and preserves corruption', () => {
+    const teams: SavedTeam[] = [{ id: 'team-1', name: 'Alpha', playerIds: ['p1'] }]
+    data[SAVED_TEAMS_KEY] = JSON.stringify(teams)
+    expect(loadSavedTeams()).toEqual(teams)
+    data[SAVED_TEAMS_KEY] = JSON.stringify({ schemaVersion: 1, teams })
+    expect(loadSavedTeams()).toEqual(teams)
+    data[SAVED_TEAMS_KEY] = '{bad teams'
+    expect(loadSavedTeams()).toEqual([])
+    expect(Object.entries(data).some(([key, value]) => key.startsWith(`${SAVED_TEAMS_KEY}_corrupt_`) && value === '{bad teams')).toBe(true)
+    throwOnSet = true
+    expect(() => saveSavedTeams(teams)).not.toThrow()
+    expect(saveSavedTeams(teams)).toBe(false)
   })
 
   it('rejects invalid dates and damaged match data and defaults missing summary strings', () => {

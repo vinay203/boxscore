@@ -20,6 +20,7 @@ import type {
   MatchStatus,
   PoolPlayer,
   PlayerRole,
+  SavedTeam,
   Screen,
   Team,
   WicketType,
@@ -36,6 +37,8 @@ import {
   saveToHistory,
   loadPlayerPool,
   savePlayerPool,
+  loadSavedTeams,
+  saveSavedTeams,
 } from './persistence'
 import { generateId } from '../utils/cricket'
 import { buildBackup, parseBackup } from './backup'
@@ -49,6 +52,8 @@ interface SetupDraft {
   team1Players: string[]
   team2Name: string
   team2Players: string[]
+  team1CaptainIndex: number | null
+  team2CaptainIndex: number | null
   tossWinnerTeam: 1 | 2 | null
   tossChoice: 'bat' | 'field'
 }
@@ -82,6 +87,7 @@ interface AppStore extends MatchState {
   showResumePrompt: boolean
   matchHistory: CompletedMatchSummary[]
   playerPool: PoolPlayer[]
+  savedTeams: SavedTeam[]
   selectedHistoryMatchId: string | null
 
   setScreen: (screen: Screen) => void
@@ -96,6 +102,10 @@ interface AppStore extends MatchState {
   addPoolPlayer: (name: string, role?: PlayerRole) => EventActionResult
   updatePoolPlayer: (id: string, changes: { name?: string; role?: PlayerRole }) => EventActionResult
   removePoolPlayer: (id: string) => EventActionResult
+  saveTeamFromDraft: (teamNo: 1 | 2) => { ok: boolean; error?: string; updated?: boolean }
+  applySavedTeamToDraft: (teamNo: 1 | 2, teamId: string) => void
+  deleteSavedTeam: (teamId: string) => void
+  addPlayersFromHistory: () => { added: number }
   dismissResumePrompt: () => void
   resumeMatch: () => void
   resetToHome: () => void
@@ -163,6 +173,8 @@ const defaultDraft = (): SetupDraft => ({
   team1Players: Array(6).fill(''),
   team2Name: '',
   team2Players: Array(6).fill(''),
+  team1CaptainIndex: null,
+  team2CaptainIndex: null,
   tossWinnerTeam: null,
   tossChoice: 'bat',
 })
@@ -180,6 +192,36 @@ function createTeam(name: string, playerNames: string[]): Team {
 
 function sortPlayerPool(pool: PoolPlayer[]): PoolPlayer[] {
   return [...pool].sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }))
+}
+
+export function findDuplicateTypedName(names: string[]): string | null {
+  const seen = new Map<string, string>()
+  for (const name of names) {
+    const trimmed = name.trim()
+    if (!trimmed) continue
+    const key = trimmed.toLocaleLowerCase()
+    const previous = seen.get(key)
+    if (previous) return previous
+    seen.set(key, trimmed)
+  }
+  return null
+}
+
+export function getNewHistoryPlayerNames(history: CompletedMatchSummary[], pool: PoolPlayer[]): string[] {
+  const known = new Set(pool.map((player) => player.name.trim().toLocaleLowerCase()))
+  const names: string[] = []
+  for (const entry of history) {
+    for (const team of [entry.match?.team1, entry.match?.team2]) {
+      for (const player of team?.players ?? []) {
+        const name = player.name.trim()
+        const normalized = name.toLocaleLowerCase()
+        if (!name || /^Player \d+$/i.test(name) || known.has(normalized)) continue
+        known.add(normalized)
+        names.push(name)
+      }
+    }
+  }
+  return names
 }
 
 function addOrFindPoolPlayer(name: string, pool: PoolPlayer[]): { player: PoolPlayer; pool: PoolPlayer[]; added: boolean } {
@@ -312,6 +354,7 @@ export const useMatchStore = create<AppStore>((set, get) => ({
   showResumePrompt: false,
   matchHistory: [],
   playerPool: [],
+  savedTeams: [],
   selectedHistoryMatchId: null,
 
   setScreen: (screen) => set({ screen }),
@@ -366,9 +409,100 @@ export const useMatchStore = create<AppStore>((set, get) => ({
     const state = get()
     if (!state.playerPool.some((player) => player.id === id)) return { ok: false, error: 'Player not found' }
     const pool = state.playerPool.filter((player) => player.id !== id)
+    const savedTeams = state.savedTeams.map((team) => ({
+      ...team,
+      playerIds: team.playerIds.filter((playerId) => playerId !== id),
+      ...(team.captainId === id ? { captainId: undefined } : {}),
+    }))
     savePlayerPool(pool)
-    set({ playerPool: pool })
+    saveSavedTeams(savedTeams)
+    set({ playerPool: pool, savedTeams })
     return { ok: true }
+  },
+
+  saveTeamFromDraft: (teamNo) => {
+    const state = get()
+    const draft = state.setupDraft
+    const teamName = (teamNo === 1 ? draft.team1Name : draft.team2Name).trim()
+    const typedNames = teamNo === 1 ? draft.team1Players : draft.team2Players
+    const captainIndex = teamNo === 1 ? draft.team1CaptainIndex : draft.team2CaptainIndex
+    if (!teamName) return { ok: false, error: 'Team name cannot be empty' }
+    if (typedNames.filter((name) => name.trim()).length < 2) {
+      return { ok: false, error: 'Add at least 2 players to save this team' }
+    }
+    const duplicate = findDuplicateTypedName(typedNames)
+    if (duplicate) return { ok: false, error: `Two players are named ${duplicate}. Use different names, for example ${duplicate} K and ${duplicate} S.` }
+
+    let pool = state.playerPool
+    const playerIds = typedNames.flatMap((name) => {
+      const trimmed = name.trim()
+      if (!trimmed) return []
+      const linked = addOrFindPoolPlayer(trimmed, pool)
+      pool = linked.pool
+      return [linked.player.id]
+    })
+    const captainPoolIndex = captainIndex === null || !typedNames[captainIndex]?.trim()
+      ? -1
+      : typedNames.slice(0, captainIndex + 1).filter((name) => name.trim()).length - 1
+    const captainId = captainPoolIndex >= 0 ? playerIds[captainPoolIndex] : undefined
+    const existing = state.savedTeams.find((team) => team.name.trim().toLocaleLowerCase() === teamName.toLocaleLowerCase())
+    const savedTeam: SavedTeam = {
+      id: existing?.id ?? generateId(),
+      name: teamName,
+      playerIds,
+      ...(captainId ? { captainId } : {}),
+    }
+    const savedTeams = existing
+      ? state.savedTeams.map((team) => team.id === existing.id ? savedTeam : team)
+      : [...state.savedTeams, savedTeam]
+    const poolSaved = savePlayerPool(pool)
+    const teamsSaved = saveSavedTeams(savedTeams)
+    set({ playerPool: pool, savedTeams })
+    if (!poolSaved || !teamsSaved) return { ok: false, error: 'Could not save team' }
+    return { ok: true, updated: !!existing }
+  },
+
+  applySavedTeamToDraft: (teamNo, teamId) => {
+    const state = get()
+    const team = state.savedTeams.find((savedTeam) => savedTeam.id === teamId)
+    if (!team) return
+    const players = team.playerIds
+      .map((id) => state.playerPool.find((player) => player.id === id))
+      .filter((player): player is PoolPlayer => !!player)
+      .slice(0, 11)
+    const size = Math.min(11, Math.max(state.setupDraft.playersPerTeam, players.length))
+    const resize = (current: string[]) => [...current, ...Array(Math.max(0, size - current.length)).fill('')].slice(0, size)
+    const teamPlayers = Array(size).fill('') as string[]
+    players.forEach((player, index) => { teamPlayers[index] = player.name })
+    const captainIndex = team.captainId ? players.findIndex((player) => player.id === team.captainId) : -1
+    set({ setupDraft: {
+      ...state.setupDraft,
+      playersPerTeam: size,
+      team1Players: resize(state.setupDraft.team1Players),
+      team2Players: resize(state.setupDraft.team2Players),
+      ...(teamNo === 1 ? {
+        team1Name: team.name, team1Players: teamPlayers, team1CaptainIndex: captainIndex >= 0 ? captainIndex : null,
+      } : {
+        team2Name: team.name, team2Players: teamPlayers, team2CaptainIndex: captainIndex >= 0 ? captainIndex : null,
+      }),
+    } })
+  },
+
+  deleteSavedTeam: (teamId) => {
+    const savedTeams = get().savedTeams.filter((team) => team.id !== teamId)
+    saveSavedTeams(savedTeams)
+    set({ savedTeams })
+  },
+
+  addPlayersFromHistory: () => {
+    const state = get()
+    const names = getNewHistoryPlayerNames(state.matchHistory, state.playerPool)
+    let pool = state.playerPool
+    for (const name of names) pool = addOrFindPoolPlayer(name, pool).pool
+    pool = sortPlayerPool(pool)
+    if (names.length > 0) savePlayerPool(pool)
+    set({ playerPool: pool })
+    return { added: names.length }
   },
 
   setSetupStep: (step) => set({ setupStep: step }),
@@ -382,6 +516,7 @@ export const useMatchStore = create<AppStore>((set, get) => ({
     }
     const history = loadMatchHistory()
     const playerPool = sortPlayerPool(loadPlayerPool())
+    const savedTeams = loadSavedTeams()
     const current = loadCurrentMatch()
     const canResume = hasResumableMatch()
 
@@ -395,9 +530,10 @@ export const useMatchStore = create<AppStore>((set, get) => ({
         showResumePrompt: true,
         matchHistory: history,
         playerPool,
+        savedTeams,
       })
     } else {
-      set({ matchHistory: history, playerPool, redoStack: [] })
+      set({ matchHistory: history, playerPool, savedTeams, redoStack: [] })
     }
   },
 
@@ -492,8 +628,20 @@ export const useMatchStore = create<AppStore>((set, get) => ({
 
     const firstTeam = attachPoolPlayers(createTeam(setupDraft.team1Name, setupDraft.team1Players), setupDraft.team1Players, get().playerPool)
     const secondTeam = attachPoolPlayers(createTeam(setupDraft.team2Name, setupDraft.team2Players), setupDraft.team2Players, firstTeam.pool)
-    const team1 = firstTeam.team
-    const team2 = secondTeam.team
+    const draftCaptain1 = setupDraft.team1CaptainIndex
+    const draftCaptain2 = setupDraft.team2CaptainIndex
+    const team1: Team = {
+      ...firstTeam.team,
+      ...(draftCaptain1 !== null && setupDraft.team1Players[draftCaptain1]?.trim()
+        ? { captainId: firstTeam.team.players[draftCaptain1]?.id }
+        : {}),
+    }
+    const team2: Team = {
+      ...secondTeam.team,
+      ...(draftCaptain2 !== null && setupDraft.team2Players[draftCaptain2]?.trim()
+        ? { captainId: secondTeam.team.players[draftCaptain2]?.id }
+        : {}),
+    }
     const playerPool = secondTeam.pool
     if (firstTeam.changed || secondTeam.changed) savePlayerPool(playerPool)
     const tossWinnerId =

@@ -33,6 +33,14 @@ export interface Team {
   id: string
   name: string
   players: Player[]
+  captainId?: string
+}
+
+export interface SavedTeam {
+  id: string
+  name: string
+  playerIds: string[]
+  captainId?: string
 }
 
 export interface Ball {
