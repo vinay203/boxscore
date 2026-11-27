@@ -381,7 +381,7 @@ export const useMatchStore = create<AppStore>((set, get) => ({
       // Persistent storage is a best-effort browser request.
     }
     const history = loadMatchHistory()
-    const playerPool = loadPlayerPool()
+    const playerPool = sortPlayerPool(loadPlayerPool())
     const current = loadCurrentMatch()
     const canResume = hasResumableMatch()
 
@@ -490,8 +490,12 @@ export const useMatchStore = create<AppStore>((set, get) => ({
   startMatch: () => {
     const { setupDraft } = get()
 
-    const team1 = createTeam(setupDraft.team1Name, setupDraft.team1Players)
-    const team2 = createTeam(setupDraft.team2Name, setupDraft.team2Players)
+    const firstTeam = attachPoolPlayers(createTeam(setupDraft.team1Name, setupDraft.team1Players), setupDraft.team1Players, get().playerPool)
+    const secondTeam = attachPoolPlayers(createTeam(setupDraft.team2Name, setupDraft.team2Players), setupDraft.team2Players, firstTeam.pool)
+    const team1 = firstTeam.team
+    const team2 = secondTeam.team
+    const playerPool = secondTeam.pool
+    if (firstTeam.changed || secondTeam.changed) savePlayerPool(playerPool)
     const tossWinnerId =
       setupDraft.tossWinnerTeam === 1 ? team1.id : team2.id
     const otherTeamId = tossWinnerId === team1.id ? team2.id : team1.id
@@ -530,7 +534,7 @@ export const useMatchStore = create<AppStore>((set, get) => ({
     }
 
     persist(newState)
-    set({ ...newState, screen: 'live', redoStack: [] })
+    set({ ...newState, screen: 'live', redoStack: [], playerPool })
   },
 
   recordRun: (runs) => get().recordDelivery({ delivery: 'legal', batRuns: runs }),
@@ -923,7 +927,12 @@ export const useMatchStore = create<AppStore>((set, get) => ({
     if (team.players.some((player) => player.name.trim().toLowerCase() === trimmedName.toLowerCase())) {
       return { ok: false, error: 'A player with that name is already on the team' }
     }
-    const updatedTeam: Team = { ...team, players: [...team.players, { id: generateId(), name: trimmedName }] }
+    const linkedPoolPlayer = addOrFindPoolPlayer(trimmedName, state.playerPool)
+    const addedPlayer = {
+      id: generateId(), name: trimmedName, poolId: linkedPoolPlayer.player.id,
+      ...(linkedPoolPlayer.player.role ? { role: linkedPoolPlayer.player.role } : {}),
+    }
+    const updatedTeam: Team = { ...team, players: [...team.players, addedPlayer] }
     const team1 = teamId === match.team1.id ? updatedTeam : match.team1
     const team2 = teamId === match.team2.id ? updatedTeam : match.team2
     const updatedMatch: Match = {
@@ -939,7 +948,8 @@ export const useMatchStore = create<AppStore>((set, get) => ({
       matchStatus: state.matchStatus,
     }
     persist(newState)
-    set({ ...newState, redoStack: [] })
+    savePlayerPool(linkedPoolPlayer.pool)
+    set({ ...newState, redoStack: [], playerPool: linkedPoolPlayer.pool })
     return { ok: true }
   },
 

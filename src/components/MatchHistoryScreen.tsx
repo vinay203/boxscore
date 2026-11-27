@@ -37,7 +37,8 @@ export function MatchHistoryScreen() {
     try {
       const result = importHistoryBackup(await file.text())
       if (result.ok) {
-        toast.success(`Added ${result.added} matches, skipped ${result.skipped} already in History`)
+        const playersMessage = result.playersAdded ? ` and ${result.playersAdded} players` : ''
+        toast.success(`Added ${result.added} matches${playersMessage}, skipped ${result.skipped} already in History`)
       } else {
         toast.error(result.error ?? 'Could not import backup')
       }

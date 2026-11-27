@@ -6,6 +6,7 @@ import { MatchSetupScreen } from './components/MatchSetupScreen'
 import { LiveScorerScreen } from './components/LiveScorerScreen'
 import { MatchSummaryScreen } from './components/MatchSummaryScreen'
 import { MatchHistoryScreen } from './components/MatchHistoryScreen'
+import { PlayersScreen } from './components/PlayersScreen'
 import { useMatchStore } from './store/matchStore'
 
 function App() {
@@ -20,6 +21,7 @@ function App() {
       <AnimatePresence mode="wait">
         {screen === 'home' && <HomeScreen key="home" />}
         {screen === 'history' && <MatchHistoryScreen key="history" />}
+        {screen === 'players' && <PlayersScreen key="players" />}
         {screen === 'setup' && <MatchSetupScreen key="setup" />}
         {screen === 'live' && <LiveScorerScreen key="live" />}
         {screen === 'summary' && <MatchSummaryScreen key="summary" />}

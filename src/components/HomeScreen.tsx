@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { ChevronRight, History } from 'lucide-react'
+import { ChevronRight, History, Users } from 'lucide-react'
 import { Button } from './ui/Button'
 import { BottomSheet } from './ui/BottomSheet'
 import { Card } from './ui/Card'
@@ -10,6 +10,7 @@ export function HomeScreen() {
   const {
     startNewMatch,
     matchHistory,
+    playerPool,
     showResumePrompt,
     resumeMatch,
     dismissResumePrompt,
@@ -68,6 +69,9 @@ export function HomeScreen() {
           <Button fullWidth onClick={handleNewMatchClick}>New Match</Button>
           <Button fullWidth variant="secondary" onClick={() => { setSelectedHistoryMatchId(null); setScreen('history') }} className="flex items-center justify-center gap-2">
             <History size={16} /> Match History
+          </Button>
+          <Button fullWidth variant="secondary" onClick={() => setScreen('players')} className="flex items-center justify-center gap-2">
+            <Users size={16} /> Players ({playerPool.length})
           </Button>
           {lastMatch && (
             <button

@@ -91,7 +91,7 @@ export function parseBackup(
     }
   }
 
-  let importedPlayers: PoolPlayer[] = []
+  const importedPlayers: PoolPlayer[] = []
   if (backup.players !== undefined) {
     if (!Array.isArray(backup.players)) return { ok: false, error: 'Players must be an array' }
     const poolIds = new Set(existingPlayers.map((player) => player.id))
@@ -111,9 +111,9 @@ export function parseBackup(
           ...(player.role !== undefined ? { role: player.role as PlayerRole } : {}),
           createdAt: typeof player.createdAt === 'string' ? player.createdAt : new Date().toISOString(),
         })
+        poolIds.add(player.id)
+        poolNames.add(normalizedName)
       }
-      poolIds.add(player.id)
-      poolNames.add(normalizedName)
     }
   }
   return { ok: true, added, skipped, newPlayers: importedPlayers }
