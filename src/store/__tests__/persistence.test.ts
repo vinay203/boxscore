@@ -84,13 +84,13 @@ describe('backup format', () => {
   it('round-trips all entries in order and with the same content', () => {
     const matches = [summary('one'), summary('two')]
     const parsed = parseBackup(buildBackup(matches), [])
-    expect(parsed).toEqual({ ok: true, added: matches, skipped: 0, newPlayers: [] })
+    expect(parsed).toEqual({ ok: true, added: matches, skipped: 0, newPlayers: [], players: [], teams: [] })
   })
 
   it('skips ids already present and validates malformed backups', () => {
     const one = summary('one')
     expect(parseBackup(backup([one, summary('two')]), [one])).toEqual({
-      ok: true, added: [summary('two')], skipped: 1, newPlayers: [],
+      ok: true, added: [summary('two')], skipped: 1, newPlayers: [], players: [], teams: [],
     })
     const invalid = [
       ['', 'Text is not valid JSON'],

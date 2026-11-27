@@ -41,7 +41,7 @@ import {
   saveSavedTeams,
 } from './persistence'
 import { generateId } from '../utils/cricket'
-import { buildBackup, parseBackup } from './backup'
+import { buildBackup, mergeBackup, parseBackup } from './backup'
 
 interface SetupDraft {
   title: string
@@ -98,13 +98,15 @@ interface AppStore extends MatchState {
   setShowScorecard: (show: boolean) => void
   initApp: () => void
   exportHistoryBackup: () => string
-  importHistoryBackup: (text: string) => { ok: boolean; added?: number; skipped?: number; playersAdded?: number; error?: string }
+  importHistoryBackup: (text: string) => { ok: boolean; added?: number; skipped?: number; playersAdded?: number; teamsAdded?: number; error?: string }
   addPoolPlayer: (name: string, role?: PlayerRole) => EventActionResult
   updatePoolPlayer: (id: string, changes: { name?: string; role?: PlayerRole }) => EventActionResult
   removePoolPlayer: (id: string) => EventActionResult
   saveTeamFromDraft: (teamNo: 1 | 2) => { ok: boolean; error?: string; updated?: boolean }
   applySavedTeamToDraft: (teamNo: 1 | 2, teamId: string) => void
   deleteSavedTeam: (teamId: string) => void
+  createSavedTeam: (name: string, playerIds: string[], captainId?: string) => EventActionResult
+  updateSavedTeam: (id: string, changes: { name?: string; playerIds?: string[]; captainId?: string | null }) => EventActionResult
   addPlayersFromHistory: () => { added: number }
   dismissResumePrompt: () => void
   resumeMatch: () => void
@@ -222,6 +224,25 @@ export function getNewHistoryPlayerNames(history: CompletedMatchSummary[], pool:
     }
   }
   return names
+}
+
+function validateSavedTeam(
+  name: string,
+  playerIds: string[],
+  captainId: string | undefined,
+  pool: PoolPlayer[],
+  teams: SavedTeam[],
+  excludeId?: string,
+): string | undefined {
+  if (!name.trim()) return 'Team name cannot be empty'
+  if (teams.some((team) => team.id !== excludeId && team.name.trim().toLocaleLowerCase() === name.trim().toLocaleLowerCase())) {
+    return 'A team with that name already exists'
+  }
+  if (playerIds.length < 2) return 'A team needs at least 2 players'
+  if (new Set(playerIds).size !== playerIds.length) return 'A team cannot contain duplicate players'
+  if (playerIds.some((id) => !pool.some((player) => player.id === id))) return 'Every player must be in the saved player pool'
+  if (captainId !== undefined && !playerIds.includes(captainId)) return 'Captain must be a player on this team'
+  return undefined
 }
 
 function addOrFindPoolPlayer(name: string, pool: PoolPlayer[]): { player: PoolPlayer; pool: PoolPlayer[]; added: boolean } {
@@ -494,6 +515,38 @@ export const useMatchStore = create<AppStore>((set, get) => ({
     set({ savedTeams })
   },
 
+  createSavedTeam: (name, playerIds, captainId) => {
+    const state = get()
+    const trimmedName = name.trim()
+    const error = validateSavedTeam(trimmedName, playerIds, captainId, state.playerPool, state.savedTeams)
+    if (error) return { ok: false, error }
+    const savedTeams = [...state.savedTeams, {
+      id: generateId(), name: trimmedName, playerIds: [...playerIds], ...(captainId ? { captainId } : {}),
+    }]
+    const saved = saveSavedTeams(savedTeams)
+    set({ savedTeams })
+    return saved ? { ok: true } : { ok: false, error: 'Could not save team' }
+  },
+
+  updateSavedTeam: (id, changes) => {
+    const state = get()
+    const existing = state.savedTeams.find((team) => team.id === id)
+    if (!existing) return { ok: false, error: 'Team not found' }
+    const name = changes.name === undefined ? existing.name : changes.name.trim()
+    const playerIds = changes.playerIds ?? existing.playerIds
+    const captainId = Object.prototype.hasOwnProperty.call(changes, 'captainId')
+      ? changes.captainId ?? undefined
+      : existing.captainId
+    const error = validateSavedTeam(name, playerIds, captainId, state.playerPool, state.savedTeams, id)
+    if (error) return { ok: false, error }
+    const savedTeams = state.savedTeams.map((team) => team.id === id ? {
+      ...team, name, playerIds: [...playerIds], ...(captainId ? { captainId } : { captainId: undefined }),
+    } : team)
+    const saved = saveSavedTeams(savedTeams)
+    set({ savedTeams })
+    return saved ? { ok: true } : { ok: false, error: 'Could not save team' }
+  },
+
   addPlayersFromHistory: () => {
     const state = get()
     const names = getNewHistoryPlayerNames(state.matchHistory, state.playerPool)
@@ -537,22 +590,30 @@ export const useMatchStore = create<AppStore>((set, get) => ({
     }
   },
 
-  exportHistoryBackup: () => buildBackup(get().matchHistory, get().playerPool),
+  exportHistoryBackup: () => buildBackup(get().matchHistory, get().playerPool, get().savedTeams),
 
   importHistoryBackup: (text) => {
     const state = get()
     const parsed = parseBackup(text, state.matchHistory, state.playerPool)
     if (!parsed.ok) return { ok: false, error: parsed.error }
-    const merged = [...parsed.added, ...state.matchHistory]
+    const merged = mergeBackup(parsed, state.playerPool, state.savedTeams)
+    const history = [...merged.matches, ...state.matchHistory]
       .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
-    const playerPool = sortPlayerPool([...state.playerPool, ...parsed.newPlayers])
-    const historySaved = saveMatchHistory(merged)
-    const playersSaved = parsed.newPlayers.length === 0 || savePlayerPool(playerPool)
-    set({ matchHistory: merged, playerPool })
-    if (!historySaved || !playersSaved) {
-      return { ok: false, added: parsed.added.length, skipped: parsed.skipped, error: 'Could not save imported data' }
+    const playerPool = sortPlayerPool(merged.pool)
+    const historySaved = saveMatchHistory(history)
+    const playersSaved = savePlayerPool(playerPool)
+    const teamsSaved = saveSavedTeams(merged.teams)
+    set({ matchHistory: history, playerPool, savedTeams: merged.teams })
+    if (!historySaved || !playersSaved || !teamsSaved) {
+      return {
+        ok: false, added: merged.counts.matches, skipped: parsed.skipped,
+        playersAdded: merged.counts.players, teamsAdded: merged.counts.teams, error: 'Could not save imported data',
+      }
     }
-    return { ok: true, added: parsed.added.length, skipped: parsed.skipped, playersAdded: parsed.newPlayers.length }
+    return {
+      ok: true, added: merged.counts.matches, skipped: parsed.skipped,
+      playersAdded: merged.counts.players, teamsAdded: merged.counts.teams,
+    }
   },
 
   dismissResumePrompt: () => set({ showResumePrompt: false }),
@@ -1110,7 +1171,11 @@ export const useMatchStore = create<AppStore>((set, get) => ({
     if (!team.players.some((player) => player.id === playerId)) return { ok: false, error: 'Player not found' }
     if (isPlayerInvolved(innings, playerId)) return { ok: false, error: 'Already batted, bowled or fielded' }
     if (team.players.length <= 2) return { ok: false, error: 'Each team must have at least 2 players' }
-    const updatedTeam: Team = { ...team, players: team.players.filter((player) => player.id !== playerId) }
+    const updatedTeam: Team = {
+      ...team,
+      players: team.players.filter((player) => player.id !== playerId),
+      ...(team.captainId === playerId ? { captainId: undefined } : {}),
+    }
     const team1 = teamId === match.team1.id ? updatedTeam : match.team1
     const team2 = teamId === match.team2.id ? updatedTeam : match.team2
     const updatedMatch: Match = {

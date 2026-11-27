@@ -166,4 +166,45 @@ describe('saved teams and captains', () => {
     expect(summary.batting.find((player) => player.id === 'a2')?.isCaptain).toBe(false)
     expect(summary.bowling[0]).toMatchObject({ id: 'b1', isCaptain: true })
   })
+
+  it('clears a match team captain when that player is removed mid-match', () => {
+    useMatchStore.getState().updateSetupDraft({
+      playersPerTeam: 4,
+      team1Players: ['One', 'Two', 'Three', 'Captain'],
+      team2Players: ['Other 1', 'Other 2', 'Other 3', 'Other 4'],
+      team1CaptainIndex: 3,
+    })
+    useMatchStore.getState().startMatch()
+    const match = useMatchStore.getState().match!
+    const captainId = match.team1.captainId!
+    expect(useMatchStore.getState().removePlayer(match.team1.id, captainId).ok).toBe(true)
+    expect(useMatchStore.getState().match!.team1.captainId).toBeUndefined()
+  })
+
+  it('validates saved team creation and updates names, members, and captain', () => {
+    useMatchStore.setState({ playerPool: [
+      { id: 'p1', name: 'One', createdAt: '2026-01-01' },
+      { id: 'p2', name: 'Two', createdAt: '2026-01-01' },
+      { id: 'p3', name: 'Three', createdAt: '2026-01-01' },
+    ] })
+    const store = useMatchStore.getState()
+    expect(store.createSavedTeam(' ', ['p1', 'p2']).ok).toBe(false)
+    expect(store.createSavedTeam('Alpha', ['p1']).ok).toBe(false)
+    expect(store.createSavedTeam('Alpha', ['p1', 'missing']).ok).toBe(false)
+    expect(store.createSavedTeam('Alpha', ['p1', 'p1']).ok).toBe(false)
+    expect(store.createSavedTeam('Alpha', ['p1', 'p2'], 'p3').ok).toBe(false)
+    expect(store.createSavedTeam('Alpha', ['p1', 'p2'], 'p1').ok).toBe(true)
+    expect(useMatchStore.getState().createSavedTeam(' alpha ', ['p1', 'p2']).ok).toBe(false)
+    expect(useMatchStore.getState().createSavedTeam('Beta', ['p2', 'p3']).ok).toBe(true)
+    const [alpha, beta] = useMatchStore.getState().savedTeams
+    expect(useMatchStore.getState().updateSavedTeam(alpha!.id, { name: ' alpha ' }).ok).toBe(true)
+    expect(useMatchStore.getState().updateSavedTeam(alpha!.id, { name: '  ' }).ok).toBe(false)
+    expect(useMatchStore.getState().updateSavedTeam(alpha!.id, { name: beta!.name }).ok).toBe(false)
+    expect(useMatchStore.getState().updateSavedTeam(alpha!.id, { playerIds: ['p1', 'p1'] }).ok).toBe(false)
+    expect(useMatchStore.getState().updateSavedTeam(alpha!.id, { playerIds: ['missing', 'p2'] }).ok).toBe(false)
+    expect(useMatchStore.getState().updateSavedTeam(alpha!.id, { captainId: 'p3' }).ok).toBe(false)
+    expect(useMatchStore.getState().updateSavedTeam(alpha!.id, { playerIds: ['p2', 'p3'] }).ok).toBe(false)
+    expect(useMatchStore.getState().updateSavedTeam(alpha!.id, { playerIds: ['p2', 'p3'], captainId: null }).ok).toBe(true)
+    expect(useMatchStore.getState().savedTeams[0]).toMatchObject({ playerIds: ['p2', 'p3'], captainId: undefined })
+  })
 })
