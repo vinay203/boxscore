@@ -44,7 +44,7 @@ overs, wicketsPerInnings, playersPerTeam, freeHitAfterNoBall, freeHitAfterWide (
 [x] 3b wicket details (all dismissal types, fielder, run-out with runs, wicket on wide/no-ball, retired out, timed out)
 [ ] 3c overthrows, penalty runs, dead ball, short run
 [x] 4a redo + ball log + delete any past ball
-[ ] 4b edit or insert any past ball
+[x] 4b edit or insert any past ball
 [ ] 4c change overs/wickets/innings/players mid-match (add, remove, substitute, rename)
 [ ] 4d reopen a finished match, undo across innings, confirmations
 [ ] 5  Storage: full matches (no cap), IndexedDB or localStorage with versioning, JSON export/import,

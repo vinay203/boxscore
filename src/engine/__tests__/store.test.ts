@@ -1,9 +1,9 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import { deriveForInnings } from '../adapter'
-import { getInningsSummary, getMatchResultFromState, getPlayerOfTheMatch } from '../views'
+import { getInningsSummary, getMatchResultFromState, getPlayerOfTheMatch, getRequiredInfo } from '../views'
 import { buildBallFromEditor } from '../ballEditor'
 import { useMatchStore } from '../../store/matchStore'
-import { migrateLegacyInnings } from '../../store/persistence'
+import { loadCurrentMatch, migrateLegacyInnings } from '../../store/persistence'
 import type { Ball, Innings, Match, Team, WicketType } from '../../types'
 
 // Mock localStorage for node environment
@@ -23,16 +23,16 @@ globalThis.localStorage = {
   key: () => null,
 } as unknown as Storage
 
-function setupTestMatch(overs = 2, wicketLimit = 3) {
+function setupTestMatch(overs = 2, wicketLimit = 3, playersPerTeam = 4) {
   useMatchStore.getState().updateSetupDraft({
     title: 'Test Match',
     overs,
     wicketLimit,
-    playersPerTeam: 4,
+    playersPerTeam,
     team1Name: 'Team Alpha',
-    team1Players: ['A1', 'A2', 'A3', 'A4'],
+    team1Players: Array.from({ length: playersPerTeam }, (_, i) => `A${i + 1}`),
     team2Name: 'Team Beta',
-    team2Players: ['B1', 'B2', 'B3', 'B4'],
+    team2Players: Array.from({ length: playersPerTeam }, (_, i) => `B${i + 1}`),
     tossWinnerTeam: 1,
     tossChoice: 'bat',
   })
@@ -44,6 +44,236 @@ describe('Store & Engine Integration (Task 4)', () => {
     mockStorage['boxscore_current_match'] = ''
     delete mockStorage['boxscore_current_match']
     delete mockStorage['boxscore_match_history']
+  })
+
+  it('adds players with unique trimmed names, updates squad size, and derives all-out from the real squad', () => {
+    setupTestMatch(2, 5)
+    const store = useMatchStore.getState()
+    const match = store.match!
+    expect(store.addPlayer(match.team1.id, '   ')).toMatchObject({ ok: false })
+    expect(store.addPlayer(match.team1.id, ' A1 ')).toMatchObject({ ok: false })
+    expect(store.addPlayer(match.team1.id, 'a1')).toMatchObject({ ok: false })
+    const added = store.addPlayer(match.team1.id, ' A5 ')
+    expect(added.ok).toBe(true)
+    const updated = useMatchStore.getState().match!
+    expect(updated.team1.players).toHaveLength(5)
+    expect(updated.team1.players[4]).toMatchObject({ name: 'A5' })
+    expect(updated.team1.players[4]!.id).not.toBe(match.team1.players[0].id)
+    expect(updated.playersPerTeam).toBe(5)
+    expect(updated.team2.players).toHaveLength(4)
+    expect(store.addPlayer(match.team2.id, 'B5').ok).toBe(true)
+    expect(useMatchStore.getState().match!.playersPerTeam).toBe(5)
+    const wickets = [
+      { kind: 'bowled' as const, outId: updated.team1.players[0]!.id, newBatterId: updated.team1.players[2]!.id },
+      { kind: 'runOut' as const, outId: updated.team1.players[1]!.id, newBatterId: updated.team1.players[3]!.id },
+      { kind: 'bowled' as const, outId: updated.team1.players[2]!.id, newBatterId: updated.team1.players[4]!.id },
+      { kind: 'bowled' as const, outId: updated.team1.players[4]!.id },
+    ]
+    const events = wickets.map((wicket, index) => ({
+      id: `out-${index}`, type: 'ball' as const, bowlerId: updated.team2.players[0]!.id,
+      delivery: 'legal' as const, batRuns: 0, byeRuns: 0, legByeRuns: 0, wideExtraRuns: 0, wicket,
+    }))
+    const makeInnings = (wicketEvents: typeof events) => [{
+      battingTeamId: updated.team1.id, bowlingTeamId: updated.team2.id, events: [
+        { id: 'open', type: 'openers' as const, strikerId: updated.team1.players[0]!.id, nonStrikerId: updated.team1.players[1]!.id }, ...wicketEvents,
+      ], currentBatsmanIds: ['', ''] as [string, string], currentBowlerId: '', status: 'live' as const, pendingBowlerSelection: false,
+    }]
+    const derived = deriveForInnings(updated, makeInnings(events.slice(0, 3)), 0)
+    expect(derived.isComplete).toBe(false)
+    expect(derived.score.wickets).toBe(3)
+    expect(deriveForInnings(updated, makeInnings(events), 0).isComplete).toBe(true)
+  })
+
+  it('lets added players bat, bowl, field, and removes only uninvolved players', () => {
+    setupTestMatch()
+    let store = useMatchStore.getState()
+    let match = store.match!
+    const [batter, partner] = match.team1.players
+    const unused = match.team1.players[2]!
+    const newBatter = store.addPlayer(match.team1.id, 'A5')
+    const newBowler = store.addPlayer(match.team2.id, 'B5')
+    expect(newBatter.ok && newBowler.ok).toBe(true)
+    match = useMatchStore.getState().match!
+    const incoming = match.team1.players[4]!
+    const fielderAndBowler = match.team2.players[4]!
+    store = useMatchStore.getState()
+    store.selectOpeningBatsmen(batter.id, partner.id)
+    store.selectBowler(fielderAndBowler.id)
+    store.recordWicket('caught', batter.id, incoming.id, { fielderId: fielderAndBowler.id })
+    const summary = getInningsSummary(match, useMatchStore.getState().innings, 0)
+    expect(summary.batting.find((player) => player.id === incoming.id)?.status).toBe('batting')
+    const ball = useMatchStore.getState().innings[0]!.events!.find((event) => event.type === 'ball')
+    expect(ball?.type === 'ball' ? ball.bowlerId : '').toBe(fielderAndBowler.id)
+    expect(ball?.type === 'ball' ? ball.wicket?.fielderId : '').toBe(fielderAndBowler.id)
+    for (let index = 0; index < 5; index++) store.recordRun(0)
+    expect(getInningsSummary(match, useMatchStore.getState().innings, 0).bowling.find((bowler) => bowler.id === fielderAndBowler.id)?.oversDisplay).toBe('1.0')
+    expect(useMatchStore.getState().removePlayer(match.team1.id, unused.id).ok).toBe(true)
+  })
+
+  it('removes only uninvolved players and enforces the two-player minimum', () => {
+    setupTestMatch()
+    let store = useMatchStore.getState()
+    let match = store.match!
+    const [b1, b2, b3] = match.team1.players
+    store.selectOpeningBatsmen(b1.id, b2.id)
+    expect(useMatchStore.getState().removePlayer(match.team1.id, b3.id).ok).toBe(true)
+    expect(useMatchStore.getState().removePlayer(match.team1.id, b1.id).error).toBe('Already batted, bowled or fielded')
+
+    setupTestMatch()
+    store = useMatchStore.getState()
+    match = store.match!
+    const striker = match.team1.players[0]!
+    const nonStriker = match.team1.players[1]!
+    const incoming = match.team1.players[3]!
+    const [fieldingBowler, fielder] = match.team2.players
+    store.selectOpeningBatsmen(striker.id, nonStriker.id)
+    store.selectBowler(fieldingBowler.id)
+    store.recordWicket('caught', striker.id, incoming.id, { fielderId: fielder.id })
+    expect(useMatchStore.getState().removePlayer(match.team2.id, fieldingBowler.id).error).toBe('Already batted, bowled or fielded')
+    expect(useMatchStore.getState().removePlayer(match.team2.id, fielder.id).error).toBe('Already batted, bowled or fielded')
+    expect(useMatchStore.getState().removePlayer(match.team1.id, incoming.id).error).toBe('Already batted, bowled or fielded')
+
+    setupTestMatch(2, 1, 2)
+    store = useMatchStore.getState()
+    match = store.match!
+    useMatchStore.setState({ innings: [{ ...useMatchStore.getState().innings[0]!, currentBatsmanIds: ['', ''] }] })
+    expect(useMatchStore.getState().removePlayer(match.team1.id, match.team1.players[1]!.id).error)
+      .toBe('Each team must have at least 2 players')
+  })
+
+  it('validates settings, re-derives innings, and completes at the new overs limit', () => {
+    setupTestMatch(2, 3)
+    let store = useMatchStore.getState()
+    let match = store.match!
+    store.selectOpeningBatsmen(match.team1.players[0]!.id, match.team1.players[1]!.id)
+    store.selectBowler(match.team2.players[0]!.id)
+    store.recordRun(0)
+    expect(useMatchStore.getState().updateMatchSettings({ overs: 3 }).ok).toBe(true)
+    expect(useMatchStore.getState().matchStatus).toBe('live')
+
+    setupTestMatch(2, 3)
+    store = useMatchStore.getState()
+    match = store.match!
+    store.selectOpeningBatsmen(match.team1.players[0]!.id, match.team1.players[1]!.id)
+    for (let index = 0; index < 6; index++) {
+      if (useMatchStore.getState().innings[0]!.pendingBowlerSelection) store.selectBowler(match.team2.players[Math.floor(index / 6)]!.id)
+      store.recordRun(0)
+    }
+    expect(useMatchStore.getState().updateMatchSettings({ overs: 1 }).ok).toBe(true)
+    expect(useMatchStore.getState().matchStatus).toBe('innings_break')
+
+    setupTestMatch(2, 3)
+    store = useMatchStore.getState()
+    match = store.match!
+    store.selectOpeningBatsmen(match.team1.players[0]!.id, match.team1.players[1]!.id)
+    store.selectBowler(match.team2.players[0]!.id)
+    for (let index = 0; index < 6; index++) store.recordRun(0)
+    store.selectBowler(match.team2.players[1]!.id)
+    store.recordRun(0)
+    const before = useMatchStore.getState()
+    const rejected = before.updateMatchSettings({ overs: 1 })
+    expect(rejected.ok).toBe(false)
+    expect(useMatchStore.getState().match?.overs).toBe(2)
+    expect(useMatchStore.getState().innings).toEqual(before.innings)
+
+    setupTestMatch(3, 3)
+    store = useMatchStore.getState()
+    match = store.match!
+    store.selectOpeningBatsmen(match.team1.players[0]!.id, match.team1.players[1]!.id)
+    store.selectBowler(match.team2.players[0]!.id)
+    store.recordWicket('bowled', match.team1.players[0]!.id, match.team1.players[2]!.id)
+    store.recordWicket('bowled', match.team1.players[2]!.id, match.team1.players[3]!.id)
+    expect(useMatchStore.getState().updateMatchSettings({ wicketLimit: 1 }).ok).toBe(false)
+    expect(useMatchStore.getState().updateMatchSettings({ wicketLimit: 4 }).ok).toBe(true)
+  })
+
+  it('protects finished innings reasons, preserves second-innings target, and persists settings and players', () => {
+    setupTestMatch(1, 3)
+    let store = useMatchStore.getState()
+    let match = store.match!
+    store.selectOpeningBatsmen(match.team1.players[0]!.id, match.team1.players[1]!.id)
+    store.selectBowler(match.team2.players[0]!.id)
+    for (let index = 0; index < 6; index++) store.recordRun(index === 0 ? 3 : 0)
+    store.startSecondInnings()
+    match = useMatchStore.getState().match!
+    const firstTarget = getRequiredInfo(match, useMatchStore.getState().innings)?.runs
+    expect(useMatchStore.getState().updateMatchSettings({ overs: 2 }).error)
+      .toBe('That would change an innings that is already finished')
+    expect(useMatchStore.getState().updateMatchSettings({ wicketLimit: 4 }).ok).toBe(true)
+    expect(getRequiredInfo(match, useMatchStore.getState().innings)?.runs).toBe(firstTarget)
+
+    setupTestMatch(1, 1, 2)
+    store = useMatchStore.getState()
+    match = store.match!
+    store.selectOpeningBatsmen(match.team1.players[0]!.id, match.team1.players[1]!.id)
+    store.selectBowler(match.team2.players[0]!.id)
+    store.recordWicket('bowled', match.team1.players[0]!.id, '')
+    store.startSecondInnings()
+    expect(useMatchStore.getState().updateMatchSettings({ overs: 2 }).ok).toBe(true)
+
+    expect(useMatchStore.getState().addPlayer(match.team1.id, 'Persisted Player').ok).toBe(true)
+    const saved = loadCurrentMatch()
+    expect(saved?.match?.overs).toBe(2)
+    expect(saved?.match?.team1.players.at(-1)?.name).toBe('Persisted Player')
+    useMatchStore.setState({ match: null, innings: [], currentInningsIndex: 0, matchStatus: 'setup' })
+    useMatchStore.getState().initApp()
+    expect(useMatchStore.getState().match?.team1.players.at(-1)?.name).toBe('Persisted Player')
+    expect(useMatchStore.getState().match?.overs).toBe(2)
+  })
+
+  it('uses the expanded chasing squad size for the result wicket margin', () => {
+    setupTestMatch(2, 5)
+    const store = useMatchStore.getState()
+    const original = store.match!
+    expect(store.addPlayer(original.team2.id, 'B5').ok).toBe(true)
+    const match = useMatchStore.getState().match!
+    const [a1, a2] = match.team1.players
+    const [b1, b2, b3, b4, b5] = match.team2.players
+    const firstInnings: Innings = {
+      battingTeamId: match.team1.id, bowlingTeamId: match.team2.id,
+      events: [
+        { id: 'first-open', type: 'openers', strikerId: a1!.id, nonStrikerId: a2!.id },
+        { id: 'first-score', type: 'ball', bowlerId: b1!.id, delivery: 'legal', batRuns: 2, byeRuns: 0, legByeRuns: 0, wideExtraRuns: 0 },
+      ], currentBatsmanIds: ['', ''], currentBowlerId: b1!.id, status: 'complete', pendingBowlerSelection: false,
+    }
+    const secondInnings: Innings = {
+      battingTeamId: match.team2.id, bowlingTeamId: match.team1.id,
+      events: [
+        { id: 'second-open', type: 'openers', strikerId: b1!.id, nonStrikerId: b2!.id },
+        { id: 'second-score', type: 'ball', bowlerId: a1!.id, delivery: 'legal', batRuns: 2, byeRuns: 0, legByeRuns: 0, wideExtraRuns: 0 },
+        { id: 'w1', type: 'ball', bowlerId: a1!.id, delivery: 'legal', batRuns: 0, byeRuns: 0, legByeRuns: 0, wideExtraRuns: 0, wicket: { kind: 'bowled', outId: b1!.id, newBatterId: b3!.id } },
+        { id: 'w2', type: 'ball', bowlerId: a1!.id, delivery: 'legal', batRuns: 0, byeRuns: 0, legByeRuns: 0, wideExtraRuns: 0, wicket: { kind: 'runOut', outId: b2!.id, newBatterId: b4!.id } },
+        { id: 'w3', type: 'ball', bowlerId: a1!.id, delivery: 'legal', batRuns: 0, byeRuns: 0, legByeRuns: 0, wideExtraRuns: 0, wicket: { kind: 'bowled', outId: b3!.id, newBatterId: b5!.id } },
+        { id: 'chase', type: 'ball', bowlerId: a1!.id, delivery: 'legal', batRuns: 1, byeRuns: 0, legByeRuns: 0, wideExtraRuns: 0 },
+      ], currentBatsmanIds: ['', ''], currentBowlerId: a1!.id, status: 'complete', pendingBowlerSelection: false,
+    }
+    expect(getMatchResultFromState(match, [firstInnings, secondInnings]).text).toContain('Team Beta won by 1 wicket')
+  })
+
+  it('keeps undo and redo usable after player/settings changes and preserves rename ids and order', () => {
+    setupTestMatch()
+    const store = useMatchStore.getState()
+    let match = store.match!
+    const originalIds = match.team1.players.map((player) => player.id)
+    store.selectOpeningBatsmen(match.team1.players[0]!.id, match.team1.players[1]!.id)
+    store.selectBowler(match.team2.players[0]!.id)
+    store.recordRun(1)
+    store.updateLiveMatchNames('Renamed Alpha', ['X1', 'X2', 'X3', 'X4'], 'Team Beta', ['B1', 'B2', 'B3', 'B4'])
+    match = useMatchStore.getState().match!
+    expect(match.team1.players.map((player) => player.id)).toEqual(originalIds)
+    expect(match.team1.players.map((player) => player.name)).toEqual(['X1', 'X2', 'X3', 'X4'])
+    expect(useMatchStore.getState().addPlayer(match.team1.id, 'A5').ok).toBe(true)
+    useMatchStore.getState().undoLastBall()
+    useMatchStore.getState().redoLastBall()
+    expect(getInningsSummary(useMatchStore.getState().match!, useMatchStore.getState().innings, 0).runs).toBe(1)
+    expect(useMatchStore.getState().updateMatchSettings({ overs: 3 }).ok).toBe(true)
+    if (useMatchStore.getState().innings[0]!.pendingBowlerSelection) {
+      useMatchStore.getState().selectBowler(match.team2.players[0]!.id)
+    }
+    useMatchStore.getState().recordRun(2)
+    useMatchStore.getState().undoLastBall()
+    useMatchStore.getState().redoLastBall()
+    expect(getInningsSummary(useMatchStore.getState().match!, useMatchStore.getState().innings, 0).runs).toBe(3)
   })
 
   it('redo restores the identical event log after a wicket and across an over boundary', () => {

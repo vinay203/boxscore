@@ -11,10 +11,10 @@ import {
 import { Button } from './ui/Button'
 import { BottomSheet } from './ui/BottomSheet'
 import { Card } from './ui/Card'
-import { Input } from './ui/Input'
 import { PageTransition } from './ui/PageTransition'
 import { ScorecardScreen } from './ScorecardScreen'
 import { BallEditorSheet, type EditableBall } from './BallEditorSheet'
+import { MatchSettingsSheet } from './MatchSettingsSheet'
 import { useMatchStore } from '../store/matchStore'
 import {
   allowedWicketKinds,
@@ -189,7 +189,6 @@ export function LiveScorerScreen() {
     selectOpeningBatsmen,
     cancelBatsmanSelection,
     retireBatsman,
-    updateLiveMatchNames,
     undoLastBall,
     startSecondInnings,
     swapBatsmen,
@@ -220,10 +219,6 @@ export function LiveScorerScreen() {
 
   // Edit Names modal state
   const [editNamesOpen, setEditNamesOpen] = useState(false)
-  const [editT1Name, setEditT1Name] = useState('')
-  const [editT1Players, setEditT1Players] = useState<string[]>([])
-  const [editT2Name, setEditT2Name] = useState('')
-  const [editT2Players, setEditT2Players] = useState<string[]>([])
 
   if (!match) return null
 
@@ -429,18 +424,7 @@ export function LiveScorerScreen() {
     setRetireOpen(false)
   }
 
-  const openEditNames = () => {
-    setEditT1Name(match.team1.name)
-    setEditT1Players(match.team1.players.map((p) => p.name))
-    setEditT2Name(match.team2.name)
-    setEditT2Players(match.team2.players.map((p) => p.name))
-    setEditNamesOpen(true)
-  }
-
-  const saveEditNames = () => {
-    updateLiveMatchNames(editT1Name, editT1Players, editT2Name, editT2Players)
-    setEditNamesOpen(false)
-  }
+  const openEditNames = () => setEditNamesOpen(true)
 
   if (matchStatus === 'innings_break') {
     const firstInnings = innings[0]
@@ -705,50 +689,7 @@ export function LiveScorerScreen() {
         <Button fullWidth onClick={confirmRetire}>Confirm Switch</Button>
       </BottomSheet>
 
-      {/* Edit Player Names Modal — Preserves all match scores */}
-      <BottomSheet open={editNamesOpen} onClose={() => setEditNamesOpen(false)} title="Edit Player Names">
-        <p className="text-sm mb-3" style={{ color: '#777' }}>
-          Update player & team names. Scores and match progress will be preserved.
-        </p>
-        <div className="space-y-4 max-h-72 overflow-y-auto pr-1">
-          <div>
-            <p className="text-sm font-semibold mb-2" style={{ color: '#111' }}>{editT1Name || 'Team 1'}</p>
-            <div className="space-y-2">
-              {editT1Players.map((name, i) => (
-                <Input
-                  key={i}
-                  placeholder={`Player ${i + 1}`}
-                  value={name}
-                  onChange={(e) => {
-                    const next = [...editT1Players]
-                    next[i] = e.target.value
-                    setEditT1Players(next)
-                  }}
-                />
-              ))}
-            </div>
-          </div>
-
-          <div>
-            <p className="text-sm font-semibold mb-2" style={{ color: '#111' }}>{editT2Name || 'Team 2'}</p>
-            <div className="space-y-2">
-              {editT2Players.map((name, i) => (
-                <Input
-                  key={i}
-                  placeholder={`Player ${i + 1}`}
-                  value={name}
-                  onChange={(e) => {
-                    const next = [...editT2Players]
-                    next[i] = e.target.value
-                    setEditT2Players(next)
-                  }}
-                />
-              ))}
-            </div>
-          </div>
-        </div>
-        <Button fullWidth className="mt-4" onClick={saveEditNames}>Save Names</Button>
-      </BottomSheet>
+      {editNamesOpen && <MatchSettingsSheet open match={match} innings={innings} onClose={() => setEditNamesOpen(false)} />}
 
       <BottomSheet open={ballLogOpen} onClose={closeBallLog} title="Ball log">
         <button type="button" className="action-btn mb-2" onClick={() => openInsertEditor(null, (current?.events ?? []).findIndex((event) => event.type === 'openers') + 1)}>Insert ball after openers</button>

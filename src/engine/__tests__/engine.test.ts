@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { allowedWicketKinds, deriveInnings } from '../deriveInnings'
 import { getResultText } from '../result'
 import { buildBallFromEditor } from '../ballEditor'
+import { isPlayerInvolved } from '../playerInvolvement'
 import { defaultRules, type InningsContext, type InningsEvent, type WicketKind } from '../types'
 
 function makeCtx(overrides?: Partial<InningsContext>): InningsContext {
@@ -31,6 +32,26 @@ function makeCtx(overrides?: Partial<InningsContext>): InningsContext {
 }
 
 describe('Cricket Scoring Engine (pure TypeScript)', () => {
+  it('isPlayerInvolved detects every player-bearing innings event and current player field', () => {
+    const innings = [{
+      battingTeamId: 't1', bowlingTeamId: 't2', currentBatsmanIds: ['current-bat', 'other'] as [string, string],
+      currentBowlerId: 'current-bowl', status: 'live' as const, pendingBowlerSelection: false,
+      events: [
+        { id: 'open', type: 'openers' as const, strikerId: 'opener-a', nonStrikerId: 'opener-b' },
+        { id: 'ball', type: 'ball' as const, bowlerId: 'bowler', delivery: 'legal' as const, batRuns: 0, byeRuns: 0, legByeRuns: 0, wideExtraRuns: 0,
+          wicket: { kind: 'caught' as const, outId: 'out', fielderId: 'fielder', newBatterId: 'incoming' } },
+        { id: 'hurt', type: 'retiredHurt' as const, batterId: 'hurt-batter', replacementId: 'hurt-replacement' },
+        { id: 'dismissal', type: 'dismissal' as const, kind: 'timedOut' as const, outId: 'timed-out', newBatterId: 'dismissal-replacement' },
+      ],
+    }]
+    const involved = [
+      'current-bat', 'other', 'current-bowl', 'opener-a', 'opener-b', 'bowler', 'out', 'fielder', 'incoming',
+      'hurt-batter', 'hurt-replacement', 'timed-out', 'dismissal-replacement',
+    ]
+    for (const playerId of involved) expect(isPlayerInvolved(innings, playerId), playerId).toBe(true)
+    expect(isPlayerInvolved(innings, 'not-involved')).toBe(false)
+  })
+
   it('buildBallFromEditor maps all delivery choices and validates byes', () => {
     const base = { runs: 3, bowlerId: 'bw1' }
     const cases = [

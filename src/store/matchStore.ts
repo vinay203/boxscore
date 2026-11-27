@@ -6,6 +6,7 @@ import {
   getInningsSummary,
   getMatchResultFromState,
   getPlayerOfTheMatch,
+  isPlayerInvolved,
   syncInnings,
 } from '../engine'
 import type { BallInput, BallValidationContext } from '../engine/validation'
@@ -135,6 +136,9 @@ interface AppStore extends MatchState {
   swapBatsmen: () => void
   endInningsEarly: () => void
   changeBowlerRequest: () => void
+  addPlayer: (teamId: string, name: string) => EventActionResult
+  removePlayer: (teamId: string, playerId: string) => EventActionResult
+  updateMatchSettings: (settings: { overs?: number; wicketLimit?: number }) => EventActionResult
 }
 
 const defaultDraft = (): SetupDraft => ({
@@ -794,6 +798,118 @@ export const useMatchStore = create<AppStore>((set, get) => ({
 
     persist(newState)
     set({ ...newState, screen: 'live', redoStack: [] })
+  },
+
+  addPlayer: (teamId, name) => {
+    const state = get()
+    const { match } = state
+    if (!match) return { ok: false, error: 'No active match' }
+    const trimmedName = name.trim()
+    if (!trimmedName) return { ok: false, error: 'Player name cannot be empty' }
+    const team = match.team1.id === teamId ? match.team1 : match.team2.id === teamId ? match.team2 : null
+    if (!team) return { ok: false, error: 'Team not found' }
+    if (team.players.some((player) => player.name.trim().toLowerCase() === trimmedName.toLowerCase())) {
+      return { ok: false, error: 'A player with that name is already on the team' }
+    }
+    const updatedTeam: Team = { ...team, players: [...team.players, { id: generateId(), name: trimmedName }] }
+    const team1 = teamId === match.team1.id ? updatedTeam : match.team1
+    const team2 = teamId === match.team2.id ? updatedTeam : match.team2
+    const updatedMatch: Match = {
+      ...match,
+      team1,
+      team2,
+      playersPerTeam: Math.max(team1.players.length, team2.players.length),
+    }
+    const newState: MatchState = {
+      match: updatedMatch,
+      innings: state.innings,
+      currentInningsIndex: state.currentInningsIndex,
+      matchStatus: state.matchStatus,
+    }
+    persist(newState)
+    set({ ...newState, redoStack: [] })
+    return { ok: true }
+  },
+
+  removePlayer: (teamId, playerId) => {
+    const state = get()
+    const { match, innings } = state
+    if (!match) return { ok: false, error: 'No active match' }
+    const team = match.team1.id === teamId ? match.team1 : match.team2.id === teamId ? match.team2 : null
+    if (!team) return { ok: false, error: 'Team not found' }
+    if (!team.players.some((player) => player.id === playerId)) return { ok: false, error: 'Player not found' }
+    if (isPlayerInvolved(innings, playerId)) return { ok: false, error: 'Already batted, bowled or fielded' }
+    if (team.players.length <= 2) return { ok: false, error: 'Each team must have at least 2 players' }
+    const updatedTeam: Team = { ...team, players: team.players.filter((player) => player.id !== playerId) }
+    const team1 = teamId === match.team1.id ? updatedTeam : match.team1
+    const team2 = teamId === match.team2.id ? updatedTeam : match.team2
+    const updatedMatch: Match = {
+      ...match,
+      team1,
+      team2,
+      playersPerTeam: Math.max(team1.players.length, team2.players.length),
+    }
+    const newState: MatchState = {
+      match: updatedMatch,
+      innings: state.innings,
+      currentInningsIndex: state.currentInningsIndex,
+      matchStatus: state.matchStatus,
+    }
+    persist(newState)
+    set({ ...newState, redoStack: [] })
+    return { ok: true }
+  },
+
+  updateMatchSettings: ({ overs, wicketLimit }) => {
+    const state = get()
+    const { match, innings, currentInningsIndex } = state
+    if (!match) return { ok: false, error: 'No active match' }
+    if (overs !== undefined && (!Number.isInteger(overs) || overs < 1 || overs > 20)) {
+      return { ok: false, error: 'Overs must be between 1 and 20' }
+    }
+    if (wicketLimit !== undefined && (!Number.isInteger(wicketLimit) || wicketLimit < 1 || wicketLimit > 10)) {
+      return { ok: false, error: 'Wickets must be between 1 and 10' }
+    }
+    const candidateMatch: Match = {
+      ...match,
+      ...(overs !== undefined ? { overs } : {}),
+      ...(wicketLimit !== undefined ? { wicketLimit } : {}),
+    }
+    for (let index = 0; index < innings.length; index++) {
+      const inn = innings[index]
+      if (!(inn.events?.length)) continue
+      const currentDerived = deriveForInnings(match, innings, index)
+      const candidateDerived = deriveForInnings(candidateMatch, innings, index)
+      if (candidateDerived.errors.length > currentDerived.errors.length) {
+        return { ok: false, error: 'That setting would make an innings invalid' }
+      }
+      const isFinished = index < currentInningsIndex || inn.status === 'complete'
+      if (isFinished && (!currentDerived.isComplete || !candidateDerived.isComplete ||
+        candidateDerived.completeReason !== currentDerived.completeReason)) {
+        return { ok: false, error: 'That would change an innings that is already finished' }
+      }
+    }
+
+    const nextInnings = [...innings]
+    if (nextInnings[currentInningsIndex]) {
+      nextInnings[currentInningsIndex] = syncInnings(
+        nextInnings[currentInningsIndex], candidateMatch, nextInnings, currentInningsIndex,
+      )
+    }
+    const liveDerived = deriveForInnings(candidateMatch, nextInnings, currentInningsIndex)
+    const nextMatchStatus: MatchStatus = liveDerived.isComplete
+      ? currentInningsIndex === 0 ? 'innings_break' : 'complete'
+      : state.matchStatus
+    const newState: MatchState = {
+      match: candidateMatch,
+      innings: nextInnings,
+      currentInningsIndex,
+      matchStatus: nextMatchStatus,
+    }
+    persist(newState)
+    set({ ...newState, redoStack: [] })
+    if (state.matchStatus === 'live' && nextMatchStatus === 'complete') get().finishMatch()
+    return { ok: true }
   },
 
   undoLastBall: () => {
