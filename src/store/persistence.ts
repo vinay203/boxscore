@@ -1,10 +1,11 @@
 import { syncInnings } from '../engine/adapter'
 import type { DeliveryKind, InningsEvent, Wicket, WicketKind } from '../engine/types'
-import type { CompletedMatchSummary, Innings, Match, MatchState } from '../types'
+import type { CompletedMatchSummary, Innings, Match, MatchState, PoolPlayer } from '../types'
 import toast from 'react-hot-toast'
 
 export const CURRENT_MATCH_KEY = 'boxscore_current_match'
 export const MATCH_HISTORY_KEY = 'boxscore_match_history'
+export const PLAYER_POOL_KEY = 'boxscore_player_pool'
 const HISTORY_SCHEMA_VERSION = 1
 let storageFailureToastShown = false
 
@@ -287,6 +288,37 @@ export function getStoredHistorySizeKB(): number {
     return Math.round(new TextEncoder().encode(raw).byteLength / 1024)
   } catch {
     return 0
+  }
+}
+
+export function loadPlayerPool(): PoolPlayer[] {
+  try {
+    const raw = localStorage.getItem(PLAYER_POOL_KEY)
+    if (!raw) return []
+    const stored: unknown = JSON.parse(raw)
+    if (Array.isArray(stored)) return stored as PoolPlayer[]
+    if (stored && typeof stored === 'object' && Array.isArray((stored as { players?: unknown }).players)) {
+      return (stored as { players: PoolPlayer[] }).players
+    }
+    preserveCorruptData(PLAYER_POOL_KEY, raw)
+  } catch {
+    try {
+      const raw = localStorage.getItem(PLAYER_POOL_KEY)
+      if (raw) preserveCorruptData(PLAYER_POOL_KEY, raw)
+    } catch {
+      // Storage may be unavailable.
+    }
+  }
+  return []
+}
+
+export function savePlayerPool(pool: PoolPlayer[]): boolean {
+  try {
+    localStorage.setItem(PLAYER_POOL_KEY, JSON.stringify({ schemaVersion: HISTORY_SCHEMA_VERSION, players: pool }))
+    return true
+  } catch {
+    showStorageFailureToast()
+    return false
   }
 }
 

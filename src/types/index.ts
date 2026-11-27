@@ -4,6 +4,8 @@ export type ExtraType = 'wide' | 'noBall' | 'bye' | 'legBye'
 
 export type WicketType = WicketKind
 
+export type PlayerRole = 'batsman' | 'bowler' | 'allrounder' | 'wicketkeeper'
+
 export type MatchStatus =
   | 'setup'
   | 'toss'
@@ -16,6 +18,15 @@ export type InningsStatus = 'live' | 'complete'
 export interface Player {
   id: string
   name: string
+  poolId?: string
+  role?: PlayerRole
+}
+
+export interface PoolPlayer {
+  id: string
+  name: string
+  role?: PlayerRole
+  createdAt: string
 }
 
 export interface Team {
@@ -120,4 +131,4 @@ export interface CompletedMatchSummary {
   }
 }
 
-export type Screen = 'home' | 'history' | 'setup' | 'live' | 'summary'
+export type Screen = 'home' | 'history' | 'players' | 'setup' | 'live' | 'summary'

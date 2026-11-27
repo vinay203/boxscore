@@ -18,6 +18,8 @@ import type {
   Match,
   MatchState,
   MatchStatus,
+  PoolPlayer,
+  PlayerRole,
   Screen,
   Team,
   WicketType,
@@ -32,6 +34,8 @@ import {
   saveCurrentMatch,
   saveMatchHistory,
   saveToHistory,
+  loadPlayerPool,
+  savePlayerPool,
 } from './persistence'
 import { generateId } from '../utils/cricket'
 import { buildBackup, parseBackup } from './backup'
@@ -77,6 +81,7 @@ interface AppStore extends MatchState {
   showScorecard: boolean
   showResumePrompt: boolean
   matchHistory: CompletedMatchSummary[]
+  playerPool: PoolPlayer[]
   selectedHistoryMatchId: string | null
 
   setScreen: (screen: Screen) => void
@@ -87,7 +92,10 @@ interface AppStore extends MatchState {
   setShowScorecard: (show: boolean) => void
   initApp: () => void
   exportHistoryBackup: () => string
-  importHistoryBackup: (text: string) => { ok: boolean; added?: number; skipped?: number; error?: string }
+  importHistoryBackup: (text: string) => { ok: boolean; added?: number; skipped?: number; playersAdded?: number; error?: string }
+  addPoolPlayer: (name: string, role?: PlayerRole) => EventActionResult
+  updatePoolPlayer: (id: string, changes: { name?: string; role?: PlayerRole }) => EventActionResult
+  removePoolPlayer: (id: string) => EventActionResult
   dismissResumePrompt: () => void
   resumeMatch: () => void
   resetToHome: () => void
@@ -168,6 +176,35 @@ function createTeam(name: string, playerNames: string[]): Team {
       name: n.trim() || `Player ${i + 1}`,
     })),
   }
+}
+
+function sortPlayerPool(pool: PoolPlayer[]): PoolPlayer[] {
+  return [...pool].sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }))
+}
+
+function addOrFindPoolPlayer(name: string, pool: PoolPlayer[]): { player: PoolPlayer; pool: PoolPlayer[]; added: boolean } {
+  const normalized = name.trim().toLocaleLowerCase()
+  const existing = pool.find((player) => player.name.trim().toLocaleLowerCase() === normalized)
+  if (existing) return { player: existing, pool, added: false }
+  const player: PoolPlayer = { id: generateId(), name: name.trim(), createdAt: new Date().toISOString() }
+  return { player, pool: sortPlayerPool([...pool, player]), added: true }
+}
+
+function attachPoolPlayers(team: Team, typedNames: string[], pool: PoolPlayer[]) {
+  let nextPool = pool
+  let changed = false
+  const linkedTeam: Team = {
+    ...team,
+    players: team.players.map((player, index) => {
+      const typedName = typedNames[index]?.trim()
+      if (!typedName) return player
+      const linked = addOrFindPoolPlayer(typedName, nextPool)
+      nextPool = linked.pool
+      changed ||= linked.added
+      return { ...player, poolId: linked.player.id, ...(linked.player.role ? { role: linked.player.role } : {}) }
+    }),
+  }
+  return { team: linkedTeam, pool: nextPool, changed }
 }
 
 function createInitialInnings(
@@ -274,6 +311,7 @@ export const useMatchStore = create<AppStore>((set, get) => ({
   showScorecard: false,
   showResumePrompt: false,
   matchHistory: [],
+  playerPool: [],
   selectedHistoryMatchId: null,
 
   setScreen: (screen) => set({ screen }),
@@ -289,6 +327,50 @@ export const useMatchStore = create<AppStore>((set, get) => ({
     set({ matchHistory: [] })
   },
 
+  addPoolPlayer: (name, role) => {
+    const state = get()
+    const trimmedName = name.trim()
+    if (!trimmedName) return { ok: false, error: 'Player name cannot be empty' }
+    if (state.playerPool.some((player) => player.name.trim().toLocaleLowerCase() === trimmedName.toLocaleLowerCase())) {
+      return { ok: false, error: 'A player with that name is already in the pool' }
+    }
+    const pool = sortPlayerPool([...state.playerPool, {
+      id: generateId(), name: trimmedName, ...(role ? { role } : {}), createdAt: new Date().toISOString(),
+    }])
+    savePlayerPool(pool)
+    set({ playerPool: pool })
+    return { ok: true }
+  },
+
+  updatePoolPlayer: (id, changes) => {
+    const state = get()
+    const current = state.playerPool.find((player) => player.id === id)
+    if (!current) return { ok: false, error: 'Player not found' }
+    const trimmedName = changes.name === undefined ? current.name : changes.name.trim()
+    if (!trimmedName) return { ok: false, error: 'Player name cannot be empty' }
+    if (state.playerPool.some((player) => player.id !== id && player.name.trim().toLocaleLowerCase() === trimmedName.toLocaleLowerCase())) {
+      return { ok: false, error: 'A player with that name is already in the pool' }
+    }
+    const updated = state.playerPool.map((player) => player.id !== id ? player : {
+      ...player,
+      name: trimmedName,
+      ...(Object.prototype.hasOwnProperty.call(changes, 'role') ? { role: changes.role } : {}),
+    })
+    const pool = sortPlayerPool(updated)
+    savePlayerPool(pool)
+    set({ playerPool: pool })
+    return { ok: true }
+  },
+
+  removePoolPlayer: (id) => {
+    const state = get()
+    if (!state.playerPool.some((player) => player.id === id)) return { ok: false, error: 'Player not found' }
+    const pool = state.playerPool.filter((player) => player.id !== id)
+    savePlayerPool(pool)
+    set({ playerPool: pool })
+    return { ok: true }
+  },
+
   setSetupStep: (step) => set({ setupStep: step }),
   setShowScorecard: (show) => set({ showScorecard: show }),
 
@@ -299,6 +381,7 @@ export const useMatchStore = create<AppStore>((set, get) => ({
       // Persistent storage is a best-effort browser request.
     }
     const history = loadMatchHistory()
+    const playerPool = loadPlayerPool()
     const current = loadCurrentMatch()
     const canResume = hasResumableMatch()
 
@@ -311,26 +394,29 @@ export const useMatchStore = create<AppStore>((set, get) => ({
         redoStack: [],
         showResumePrompt: true,
         matchHistory: history,
+        playerPool,
       })
     } else {
-      set({ matchHistory: history, redoStack: [] })
+      set({ matchHistory: history, playerPool, redoStack: [] })
     }
   },
 
-  exportHistoryBackup: () => buildBackup(get().matchHistory),
+  exportHistoryBackup: () => buildBackup(get().matchHistory, get().playerPool),
 
   importHistoryBackup: (text) => {
     const state = get()
-    const parsed = parseBackup(text, state.matchHistory)
+    const parsed = parseBackup(text, state.matchHistory, state.playerPool)
     if (!parsed.ok) return { ok: false, error: parsed.error }
     const merged = [...parsed.added, ...state.matchHistory]
       .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
-    if (!saveMatchHistory(merged)) {
-      set({ matchHistory: merged })
-      return { ok: false, added: parsed.added.length, skipped: parsed.skipped, error: 'Could not save imported matches' }
+    const playerPool = sortPlayerPool([...state.playerPool, ...parsed.newPlayers])
+    const historySaved = saveMatchHistory(merged)
+    const playersSaved = parsed.newPlayers.length === 0 || savePlayerPool(playerPool)
+    set({ matchHistory: merged, playerPool })
+    if (!historySaved || !playersSaved) {
+      return { ok: false, added: parsed.added.length, skipped: parsed.skipped, error: 'Could not save imported data' }
     }
-    set({ matchHistory: merged })
-    return { ok: true, added: parsed.added.length, skipped: parsed.skipped }
+    return { ok: true, added: parsed.added.length, skipped: parsed.skipped, playersAdded: parsed.newPlayers.length }
   },
 
   dismissResumePrompt: () => set({ showResumePrompt: false }),
