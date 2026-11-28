@@ -77,6 +77,7 @@ export interface Match {
   team2: Team
   tossWinnerId: string
   battingFirstId: string
+  joker?: { playerId: string; canBat: boolean; canBowl: boolean }
 }
 
 export interface MatchState {

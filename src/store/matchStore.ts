@@ -56,6 +56,9 @@ interface SetupDraft {
   team2CaptainIndex: number | null
   tossWinnerTeam: 1 | 2 | null
   tossChoice: 'bat' | 'field'
+  jokerName: string
+  jokerCanBat: boolean
+  jokerCanBowl: boolean
 }
 
 type DeliveryInput = BallInput
@@ -137,12 +140,12 @@ interface AppStore extends MatchState {
       legByeRuns?: number
       wideExtraRuns?: number
     },
-  ) => void
+  ) => EventActionResult | void
   selectBowler: (bowlerId: string) => void
   cancelBowlerSelection: () => void
-  selectOpeningBatsmen: (strikerId: string, nonStrikerId: string) => void
+  selectOpeningBatsmen: (strikerId: string, nonStrikerId: string) => EventActionResult
   cancelBatsmanSelection: () => void
-  retireBatsman: (isStriker: boolean, newBatsmanId: string) => void
+  retireBatsman: (isStriker: boolean, newBatsmanId: string) => EventActionResult | void
   updateLiveMatchNames: (
     team1Name: string,
     team1Players: string[],
@@ -179,6 +182,9 @@ const defaultDraft = (): SetupDraft => ({
   team2CaptainIndex: null,
   tossWinnerTeam: null,
   tossChoice: 'bat',
+  jokerName: '',
+  jokerCanBat: true,
+  jokerCanBowl: true,
 })
 
 function createTeam(name: string, playerNames: string[]): Team {
@@ -686,6 +692,10 @@ export const useMatchStore = create<AppStore>((set, get) => ({
 
   startMatch: () => {
     const { setupDraft } = get()
+    const jokerName = setupDraft.jokerName.trim()
+    const teamNames = [...setupDraft.team1Players, ...setupDraft.team2Players]
+      .map((name) => name.trim().toLocaleLowerCase()).filter(Boolean)
+    if (jokerName && teamNames.includes(jokerName.toLocaleLowerCase())) return
 
     const firstTeam = attachPoolPlayers(createTeam(setupDraft.team1Name, setupDraft.team1Players), setupDraft.team1Players, get().playerPool)
     const secondTeam = attachPoolPlayers(createTeam(setupDraft.team2Name, setupDraft.team2Players), setupDraft.team2Players, firstTeam.pool)
@@ -703,8 +713,24 @@ export const useMatchStore = create<AppStore>((set, get) => ({
         ? { captainId: secondTeam.team.players[draftCaptain2]?.id }
         : {}),
     }
-    const playerPool = secondTeam.pool
-    if (firstTeam.changed || secondTeam.changed) savePlayerPool(playerPool)
+    let playerPool = secondTeam.pool
+    let joker: Match['joker']
+    let jokerPoolChanged = false
+    if (jokerName) {
+      const linkedJoker = addOrFindPoolPlayer(jokerName, playerPool)
+      jokerPoolChanged = linkedJoker.added
+      playerPool = linkedJoker.pool
+      const jokerPlayer = {
+        id: generateId(),
+        name: linkedJoker.player.name,
+        poolId: linkedJoker.player.id,
+        ...(linkedJoker.player.role ? { role: linkedJoker.player.role } : {}),
+      }
+      team1.players = [...team1.players, jokerPlayer]
+      team2.players = [...team2.players, jokerPlayer]
+      joker = { playerId: jokerPlayer.id, canBat: setupDraft.jokerCanBat, canBowl: setupDraft.jokerCanBowl }
+    }
+    if (firstTeam.changed || secondTeam.changed || jokerPoolChanged) savePlayerPool(playerPool)
     const tossWinnerId =
       setupDraft.tossWinnerTeam === 1 ? team1.id : team2.id
     const otherTeamId = tossWinnerId === team1.id ? team2.id : team1.id
@@ -720,6 +746,7 @@ export const useMatchStore = create<AppStore>((set, get) => ({
       team2,
       tossWinnerId,
       battingFirstId,
+      ...(joker ? { joker } : {}),
     }
 
     const battingTeam =
@@ -827,6 +854,9 @@ export const useMatchStore = create<AppStore>((set, get) => ({
     const state = get()
     const { match, innings, currentInningsIndex } = state
     if (!match || state.matchStatus !== 'live') return
+    if (newBatsmanId && newBatsmanId === match.joker?.playerId && !match.joker.canBat) {
+      return { ok: false, error: 'Joker is not allowed to bat' }
+    }
 
     const current = innings[currentInningsIndex]
     if (
@@ -909,6 +939,7 @@ export const useMatchStore = create<AppStore>((set, get) => ({
     const state = get()
     const { match, innings, currentInningsIndex } = state
     if (!match) return
+    if (bowlerId === match.joker?.playerId && !match.joker.canBowl) return
 
     const current = innings[currentInningsIndex]
     const updated: Innings = {
@@ -956,7 +987,10 @@ export const useMatchStore = create<AppStore>((set, get) => ({
   selectOpeningBatsmen: (strikerId, nonStrikerId) => {
     const state = get()
     const { match, innings, currentInningsIndex } = state
-    if (!match) return
+    if (!match) return { ok: false, error: 'No active match' }
+    if (!match.joker?.canBat && (strikerId === match.joker?.playerId || nonStrikerId === match.joker?.playerId)) {
+      return { ok: false, error: 'Joker is not allowed to bat' }
+    }
 
     const current = innings[currentInningsIndex]
     const events = [...(current.events ?? [])]
@@ -1009,6 +1043,7 @@ export const useMatchStore = create<AppStore>((set, get) => ({
     if (matchStatus === 'complete') {
       get().finishMatch()
     }
+    return { ok: true }
   },
 
   cancelBatsmanSelection: () => {
@@ -1037,6 +1072,9 @@ export const useMatchStore = create<AppStore>((set, get) => ({
     const state = get()
     const { match, innings, currentInningsIndex } = state
     if (!match || state.matchStatus !== 'live') return
+    if (newBatsmanId && newBatsmanId === match.joker?.playerId && !match.joker.canBat) {
+      return { ok: false, error: 'Joker is not allowed to bat' }
+    }
 
     const current = innings[currentInningsIndex]
     const batterId = isStriker
@@ -1090,12 +1128,20 @@ export const useMatchStore = create<AppStore>((set, get) => ({
     const { match } = state
     if (!match) return
 
+    const jokerId = match.joker?.playerId
+    const jokerTeam1Index = match.team1.players.findIndex((player) => player.id === jokerId)
+    const jokerTeam2Index = match.team2.players.findIndex((player) => player.id === jokerId)
+    const jokerName1 = jokerTeam1Index >= 0 ? t1Players[jokerTeam1Index]?.trim() : ''
+    const jokerName2 = jokerTeam2Index >= 0 ? t2Players[jokerTeam2Index]?.trim() : ''
+    const oldJokerName = jokerId ? match.team1.players.find((player) => player.id === jokerId)?.name : undefined
+    const jokerName = jokerName1 && jokerName1 !== oldJokerName ? jokerName1
+      : jokerName2 && jokerName2 !== oldJokerName ? jokerName2 : oldJokerName
     const newTeam1: Team = {
       ...match.team1,
       name: t1Name.trim() || match.team1.name,
       players: match.team1.players.map((p, i) => ({
         ...p,
-        name: t1Players[i]?.trim() || p.name,
+        name: p.id === jokerId ? jokerName ?? p.name : t1Players[i]?.trim() || p.name,
       })),
     }
 
@@ -1104,7 +1150,7 @@ export const useMatchStore = create<AppStore>((set, get) => ({
       name: t2Name.trim() || match.team2.name,
       players: match.team2.players.map((p, i) => ({
         ...p,
-        name: t2Players[i]?.trim() || p.name,
+        name: p.id === jokerId ? jokerName ?? p.name : t2Players[i]?.trim() || p.name,
       })),
     }
 
@@ -1169,6 +1215,7 @@ export const useMatchStore = create<AppStore>((set, get) => ({
     const team = match.team1.id === teamId ? match.team1 : match.team2.id === teamId ? match.team2 : null
     if (!team) return { ok: false, error: 'Team not found' }
     if (!team.players.some((player) => player.id === playerId)) return { ok: false, error: 'Player not found' }
+    if (playerId === match.joker?.playerId) return { ok: false, error: 'Use the joker settings to remove the joker' }
     if (isPlayerInvolved(innings, playerId)) return { ok: false, error: 'Already batted, bowled or fielded' }
     if (team.players.length <= 2) return { ok: false, error: 'Each team must have at least 2 players' }
     const updatedTeam: Team = {

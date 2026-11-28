@@ -24,6 +24,7 @@ export interface MatchRules {
   jokerEnabled: boolean
   jokerCanBat: boolean
   jokerCanBowl: boolean
+  jokerId?: string
   lastManStands: boolean
 }
 

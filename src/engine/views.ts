@@ -13,6 +13,7 @@ export interface BattingSummaryRow {
   id: string
   name: string
   isCaptain: boolean
+  isJoker: boolean
   runs: number
   balls: number
   ballsFaced: number
@@ -27,6 +28,7 @@ export interface BowlingSummaryRow {
   id: string
   name: string
   isCaptain: boolean
+  isJoker: boolean
   overs: string
   oversDisplay: string
   maidens: number
@@ -81,6 +83,7 @@ export function getInningsSummary(
       id: player.id,
       name: player.name,
       isCaptain: player.id === battingTeam.captainId,
+      isJoker: player.id === match.joker?.playerId,
       runs: stats.runs,
       balls: stats.balls,
       ballsFaced: stats.balls,
@@ -112,6 +115,7 @@ export function getInningsSummary(
       id: bowlerId,
       name,
       isCaptain: bowlerId === bowlingTeam.captainId,
+      isJoker: bowlerId === match.joker?.playerId,
       overs: stats.oversDisplay,
       oversDisplay: stats.oversDisplay,
       maidens: stats.maidens,
@@ -136,6 +140,7 @@ export function getInningsSummary(
     .map((p) => p.name)
 
   const remainingBatsmen = battingTeam.players.filter((p) => {
+    if (p.id === match.joker?.playerId && match.joker.canBat === false) return false
     const s = derived.batting[p.id]?.status ?? 'didNotBat'
     return s === 'didNotBat' || s === 'retiredHurt'
   })
@@ -174,7 +179,10 @@ export function getMatchResultFromState(
   const secondInningsRuns = d1.score.runs
   const secondInningsWicketsLost = d1.score.wickets
   const squadSize = secondTeam.players.length
-  const wicketLimit = Math.min(match.wicketLimit, Math.max(1, squadSize - 1))
+  const battableCount = secondTeam.players.filter((player) =>
+    match.joker?.canBat !== false || player.id !== match.joker?.playerId,
+  ).length
+  const wicketLimit = Math.min(match.wicketLimit, Math.max(1, Math.min(squadSize, battableCount) - 1))
   const legalBallsLeft = Math.max(0, match.overs * 6 - d1.score.legalBalls)
 
   const text = getResultText(

@@ -170,8 +170,17 @@ export function deriveInnings(
 
   const maxWickets = Math.min(
     ctx.rules.wicketsPerInnings,
-    Math.max(1, ctx.battingPlayerIds.length - 1),
+    Math.max(1, ctx.battingPlayerIds.filter((id) => ctx.rules.jokerCanBat || id !== ctx.rules.jokerId).length - 1),
   )
+
+  const invalidIncomingBatter = (id: string | undefined): boolean => {
+    if (!id) return false
+    if (id === ctx.rules.jokerId && !ctx.rules.jokerCanBat) {
+      errors.push('Joker is not allowed to bat')
+      return true
+    }
+    return batting[id]?.status === 'out'
+  }
 
   function checkCompletion(): void {
     if (isComplete) return
@@ -212,6 +221,12 @@ export function deriveInnings(
     }
 
     if (ev.type === 'openers') {
+      if (!ctx.rules.jokerCanBat &&
+        (ev.strikerId === ctx.rules.jokerId || ev.nonStrikerId === ctx.rules.jokerId)) {
+        errors.push('Joker is not allowed to bat')
+        needsNewBatter = true
+        continue
+      }
       if (ev.strikerId === ev.nonStrikerId) {
         errors.push(`Opening batters must be different players`)
         continue
@@ -241,7 +256,8 @@ export function deriveInnings(
       bStats.dismissalText = 'retired hurt'
 
       if (ev.batterId === strikerId) {
-        if (ev.replacementId && batting[ev.replacementId]?.status !== 'out') {
+        const invalidReplacement = invalidIncomingBatter(ev.replacementId)
+        if (ev.replacementId && !invalidReplacement) {
           strikerId = ev.replacementId
           setBattingStatus(ev.replacementId)
           needsNewBatter = false
@@ -250,7 +266,8 @@ export function deriveInnings(
           needsNewBatter = true
         }
       } else if (ev.batterId === nonStrikerId) {
-        if (ev.replacementId && batting[ev.replacementId]?.status !== 'out') {
+        const invalidReplacement = invalidIncomingBatter(ev.replacementId)
+        if (ev.replacementId && !invalidReplacement) {
           nonStrikerId = ev.replacementId
           setBattingStatus(ev.replacementId)
           needsNewBatter = false
@@ -279,7 +296,8 @@ export function deriveInnings(
       currentPartnership = { runs: 0, balls: 0 }
 
       if (ev.outId === strikerId) {
-        if (ev.newBatterId && batting[ev.newBatterId]?.status !== 'out') {
+        const invalidReplacement = invalidIncomingBatter(ev.newBatterId)
+        if (ev.newBatterId && !invalidReplacement) {
           strikerId = ev.newBatterId
           setBattingStatus(ev.newBatterId)
           needsNewBatter = false
@@ -288,7 +306,8 @@ export function deriveInnings(
           needsNewBatter = true
         }
       } else if (ev.outId === nonStrikerId) {
-        if (ev.newBatterId && batting[ev.newBatterId]?.status !== 'out') {
+        const invalidReplacement = invalidIncomingBatter(ev.newBatterId)
+        if (ev.newBatterId && !invalidReplacement) {
           nonStrikerId = ev.newBatterId
           setBattingStatus(ev.newBatterId)
           needsNewBatter = false
@@ -312,6 +331,7 @@ export function deriveInnings(
       const findAvailableDidNotBatPlayer = (excludeId?: string | null): string | null => {
         for (const pid of ctx.battingPlayerIds) {
           if (pid === excludeId || pid === strikerId || pid === nonStrikerId) continue
+          if (pid === ctx.rules.jokerId && !ctx.rules.jokerCanBat) continue
           const b = batting[pid]
           if (!b || b.status === 'didNotBat') {
             return pid
@@ -355,6 +375,10 @@ export function deriveInnings(
       const isNoBall = ev.delivery === 'noBall'
       const isLegal = ev.delivery === 'legal'
       const isThisBallFreeHit: boolean = isFreeHitState
+
+      if (ev.bowlerId === ctx.rules.jokerId && !ctx.rules.jokerCanBowl) {
+        errors.push('Joker is not allowed to bowl')
+      }
 
       const widePenaltyRuns = isWide ? ctx.rules.wideRuns + ev.wideExtraRuns : 0
       const noBallPenaltyRuns = isNoBall ? ctx.rules.noBallRuns : 0
@@ -510,8 +534,9 @@ export function deriveInnings(
 
         // Rule 9: The dismissed batter is replaced IN PLACE by newBatterId
         const incomingId = validWicket.newBatterId
+        const invalidByRule = invalidIncomingBatter(incomingId)
         const invalidIncoming = !!incomingId && (
-          incomingId === strikerId || incomingId === nonStrikerId || batting[incomingId]?.status === 'out'
+          incomingId === strikerId || incomingId === nonStrikerId || invalidByRule
         )
         if (invalidIncoming) errors.push('batter cannot come in')
         if (validWicket.outId === strikerId) {

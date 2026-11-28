@@ -2,6 +2,7 @@ import type {
   Innings,
   InningsStatus,
   Match,
+  Player,
 } from '../types'
 import { deriveInnings } from './deriveInnings'
 import {
@@ -17,7 +18,20 @@ export function rulesFromMatch(match: Match): MatchRules {
     overs: match.overs,
     wicketsPerInnings: match.wicketLimit,
     playersPerTeam: match.playersPerTeam,
+    jokerEnabled: !!match.joker,
+    jokerId: match.joker?.playerId,
+    jokerCanBat: match.joker?.canBat ?? defaultRules.jokerCanBat,
+    jokerCanBowl: match.joker?.canBowl ?? defaultRules.jokerCanBowl,
   }
+}
+
+export function getBowlerChoices(match: Match, inningsIndex: number): Player[] {
+  const bowlingTeam = inningsIndex === 0
+    ? (match.team1.id === match.battingFirstId ? match.team2 : match.team1)
+    : (match.team1.id === match.battingFirstId ? match.team1 : match.team2)
+  return bowlingTeam.players.filter((player) =>
+    match.joker?.canBowl !== false || player.id !== match.joker.playerId,
+  )
 }
 
 export function deriveForInnings(

@@ -60,9 +60,13 @@ export function MatchSetupScreen() {
   const duplicateTeam2Name = findDuplicateTypedName(setupDraft.team2Players)
   const canProceedStep2 = setupDraft.team1Name.trim().length > 0 && !duplicateTeam1Name
   const canProceedStep3 = setupDraft.team2Name.trim().length > 0 && !duplicateTeam2Name
+  const jokerNameKey = setupDraft.jokerName.trim().toLocaleLowerCase()
+  const jokerNameMatchesTeamPlayer = !!jokerNameKey && [...setupDraft.team1Players, ...setupDraft.team2Players]
+    .some((name) => name.trim().toLocaleLowerCase() === jokerNameKey)
   const canStart =
     setupDraft.tossWinnerTeam !== null &&
-    (setupDraft.tossChoice === 'bat' || setupDraft.tossChoice === 'field')
+    (setupDraft.tossChoice === 'bat' || setupDraft.tossChoice === 'field') &&
+    !jokerNameMatchesTeamPlayer
 
   const saveTeam = (teamNo: 1 | 2) => {
     const result = saveTeamFromDraft(teamNo)
@@ -81,6 +85,7 @@ export function MatchSetupScreen() {
     const duplicateName = isTeam1 ? duplicateTeam1Name : duplicateTeam2Name
     const namesAlreadyTyped = new Set([...setupDraft.team1Players, ...setupDraft.team2Players]
       .map((player) => player.trim().toLocaleLowerCase()).filter(Boolean))
+    if (jokerNameKey) namesAlreadyTyped.add(jokerNameKey)
     const availablePlayers = [...playerPool]
       .filter((player) => !namesAlreadyTyped.has(player.name.trim().toLocaleLowerCase()))
       .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }))
@@ -208,6 +213,26 @@ export function MatchSetupScreen() {
             <h2 className="text-lg font-bold mb-4" style={{ color: '#111' }}>Team 2 Setup</h2>
             <Input label="Team name" placeholder="Team Beta" value={setupDraft.team2Name} onChange={(e) => updateSetupDraft({ team2Name: e.target.value })} />
             {renderPlayerSetup(2)}
+          </Card>
+
+          <Card className="mb-4">
+            <h2 className="text-lg font-bold mb-3" style={{ color: '#111' }}>Joker (optional)</h2>
+            <Input label="Joker plays for both teams" placeholder="Player name" value={setupDraft.jokerName} onChange={(event) => updateSetupDraft({ jokerName: event.target.value })} />
+            {playerPool.length > 0 && (
+              <div className="mt-3">
+                <p className="text-xs text-gray-500 mb-1.5">Saved players</p>
+                <div className="flex gap-2 overflow-x-auto pb-1">
+                  {playerPool.filter((player) => ![...setupDraft.team1Players, ...setupDraft.team2Players].some((name) => name.trim().toLocaleLowerCase() === player.name.trim().toLocaleLowerCase())).map((player) => (
+                    <button key={player.id} type="button" onClick={() => updateSetupDraft({ jokerName: player.name })} className="toss-btn whitespace-nowrap" style={{ padding: '7px 10px', fontSize: '11px' }}>{player.name}</button>
+                  ))}
+                </div>
+              </div>
+            )}
+            <div className="flex gap-2 mt-3">
+              <button type="button" onClick={() => updateSetupDraft({ jokerCanBat: !setupDraft.jokerCanBat })} className={`toss-btn ${setupDraft.jokerCanBat ? 'selected-fill' : ''}`}>Can bat</button>
+              <button type="button" onClick={() => updateSetupDraft({ jokerCanBowl: !setupDraft.jokerCanBowl })} className={`toss-btn ${setupDraft.jokerCanBowl ? 'selected-fill' : ''}`}>Can bowl</button>
+            </div>
+            {jokerNameMatchesTeamPlayer && <p className="mt-2 text-xs text-red-600">The joker has the same name as a team player</p>}
           </Card>
 
           <Card>

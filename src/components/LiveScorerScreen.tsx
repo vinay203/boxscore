@@ -26,9 +26,10 @@ import {
   DISMISSAL_TYPES,
   getLastBowlerId,
   getRequiredInfo,
+  getBowlerChoices,
   type DerivedBall,
 } from '../engine'
-import type { ExtraType, Team, WicketType } from '../types'
+import type { ExtraType, Player, WicketType } from '../types'
 import type { InningsEvent } from '../engine/types'
 import {
   getPlayerById,
@@ -76,7 +77,8 @@ function BallDot({ ball }: { ball: DerivedBall }) {
 interface OpeningBatsmenSheetProps {
   open: boolean
   onClose: () => void
-  battingTeam: Team
+  battingChoices: Player[]
+  jokerId?: string
   onConfirm: (strikerId: string, nonStrikerId: string) => { ok: boolean; error?: string } | void
   initialStrikerId?: string
   initialNonStrikerId?: string
@@ -84,25 +86,27 @@ interface OpeningBatsmenSheetProps {
 }
 
 function OpeningBatsmenForm({
-  battingTeam,
+  battingChoices,
+  jokerId,
   onConfirm,
   initialStrikerId,
   initialNonStrikerId,
   onBackToInningsBreak,
 }: {
-  battingTeam: Team
+  battingChoices: Player[]
+  jokerId?: string
   onConfirm: (strikerId: string, nonStrikerId: string) => { ok: boolean; error?: string } | void
   initialStrikerId?: string
   initialNonStrikerId?: string
   onBackToInningsBreak?: () => void
 }) {
-  const [selectedStriker, setSelectedStriker] = useState(initialStrikerId ?? battingTeam.players[0]?.id ?? '')
-  const [selectedNonStriker, setSelectedNonStriker] = useState(initialNonStrikerId ?? battingTeam.players[1]?.id ?? '')
+  const [selectedStriker, setSelectedStriker] = useState(initialStrikerId ?? battingChoices[0]?.id ?? '')
+  const [selectedNonStriker, setSelectedNonStriker] = useState(initialNonStrikerId ?? battingChoices[1]?.id ?? '')
   const [error, setError] = useState('')
 
   const handleConfirm = () => {
-    const s = selectedStriker || battingTeam.players[0]?.id || ''
-    const ns = selectedNonStriker || battingTeam.players[1]?.id || ''
+    const s = selectedStriker || battingChoices[0]?.id || ''
+    const ns = selectedNonStriker || battingChoices[1]?.id || ''
     if (!s || !ns || s === ns) return
     const result = onConfirm(s, ns)
     setError(result && !result.ok ? result.error ?? 'Could not edit openers' : '')
@@ -113,16 +117,16 @@ function OpeningBatsmenForm({
       <div>
         <p className="text-sm font-medium mb-2" style={{ color: '#111' }}>Striker</p>
         <div className="space-y-2 max-h-36 overflow-y-auto">
-          {battingTeam.players.map((p) => (
+          {battingChoices.map((p) => (
             <button
               key={p.id}
               type="button"
-              disabled={p.id === (selectedNonStriker || battingTeam.players[1]?.id)}
+              disabled={p.id === (selectedNonStriker || battingChoices[1]?.id)}
               onClick={() => setSelectedStriker(p.id)}
-              className={`sheet-option ${(selectedStriker || battingTeam.players[0]?.id) === p.id ? 'selected' : ''}`}
+              className={`sheet-option ${(selectedStriker || battingChoices[0]?.id) === p.id ? 'selected' : ''}`}
             >
-              <span className="font-medium" style={{ color: '#111' }}>{p.name}</span>
-              {(selectedStriker || battingTeam.players[0]?.id) === p.id && <span style={{ fontSize: '12px', color: '#888' }}>Striker</span>}
+              <span className="font-medium" style={{ color: '#111' }}>{p.name}{p.id === jokerId ? ' (J)' : ''}</span>
+              {(selectedStriker || battingChoices[0]?.id) === p.id && <span style={{ fontSize: '12px', color: '#888' }}>Striker</span>}
             </button>
           ))}
         </div>
@@ -130,16 +134,16 @@ function OpeningBatsmenForm({
       <div>
         <p className="text-sm font-medium mb-2" style={{ color: '#111' }}>Non-Striker</p>
         <div className="space-y-2 max-h-36 overflow-y-auto">
-          {battingTeam.players.map((p) => (
+          {battingChoices.map((p) => (
             <button
               key={p.id}
               type="button"
-              disabled={p.id === (selectedStriker || battingTeam.players[0]?.id)}
+              disabled={p.id === (selectedStriker || battingChoices[0]?.id)}
               onClick={() => setSelectedNonStriker(p.id)}
-              className={`sheet-option ${(selectedNonStriker || battingTeam.players[1]?.id) === p.id ? 'selected' : ''}`}
+              className={`sheet-option ${(selectedNonStriker || battingChoices[1]?.id) === p.id ? 'selected' : ''}`}
             >
-              <span className="font-medium" style={{ color: '#111' }}>{p.name}</span>
-              {(selectedNonStriker || battingTeam.players[1]?.id) === p.id && <span style={{ fontSize: '12px', color: '#888' }}>Non-Striker</span>}
+              <span className="font-medium" style={{ color: '#111' }}>{p.name}{p.id === jokerId ? ' (J)' : ''}</span>
+              {(selectedNonStriker || battingChoices[1]?.id) === p.id && <span style={{ fontSize: '12px', color: '#888' }}>Non-Striker</span>}
             </button>
           ))}
         </div>
@@ -156,7 +160,8 @@ function OpeningBatsmenForm({
 function OpeningBatsmenSheet({
   open,
   onClose,
-  battingTeam,
+  battingChoices,
+  jokerId,
   onConfirm,
   initialStrikerId,
   initialNonStrikerId,
@@ -168,7 +173,7 @@ function OpeningBatsmenSheet({
       onClose={onClose}
       title="Select Opening Batsmen"
     >
-      <OpeningBatsmenForm key={`${initialStrikerId ?? ''}-${initialNonStrikerId ?? ''}`} battingTeam={battingTeam} onConfirm={onConfirm} initialStrikerId={initialStrikerId} initialNonStrikerId={initialNonStrikerId} onBackToInningsBreak={onBackToInningsBreak} />
+      <OpeningBatsmenForm key={`${initialStrikerId ?? ''}-${initialNonStrikerId ?? ''}`} battingChoices={battingChoices} jokerId={jokerId} onConfirm={onConfirm} initialStrikerId={initialStrikerId} initialNonStrikerId={initialNonStrikerId} onBackToInningsBreak={onBackToInningsBreak} />
     </BottomSheet>
   )
 }
@@ -286,6 +291,13 @@ export function LiveScorerScreen() {
       : null
 
   const remainingBatsmen = summary ? summary.remainingBatsmen : []
+  const openingBatterChoices = battingTeam.players.filter((player) =>
+    remainingBatsmen.some((remaining) => remaining.id === player.id) || current?.currentBatsmanIds.includes(player.id),
+  )
+  const bowlerChoices = getBowlerChoices(match, currentInningsIndex)
+  const jokerCanBat = match.joker?.canBat ?? false
+  const jokerCanBowl = match.joker?.canBowl ?? false
+  const jokerCapabilities = jokerCanBat && jokerCanBowl ? 'bat & bowl' : jokerCanBat ? 'bat' : jokerCanBowl ? 'bowl' : ''
 
   const lastBowlerId = derived ? getLastBowlerId(derived.balls) : null
   const derivedBallById = new Map((derived?.balls ?? []).map((ball) => [ball.eventId, ball]))
@@ -491,6 +503,9 @@ export function LiveScorerScreen() {
             </div>
           )}
           {derived?.isFreeHitNext && currentInningsIndex !== 1 && <p className="target-pill">FREE HIT</p>}
+          {match.joker && jokerCapabilities && (
+            <p className="target-pill">Joker: {match.team1.players.find((player) => player.id === match.joker?.playerId)?.name ?? 'Joker'} <span className="ml-1 text-[10px] text-gray-400">{jokerCapabilities}</span></p>
+          )}
         </div>
 
         {/* This over strip */}
@@ -623,7 +638,8 @@ export function LiveScorerScreen() {
         key={currentInningsIndex}
         open={!!current.pendingBatsmanSelection}
         onClose={cancelBatsmanSelection}
-        battingTeam={battingTeam}
+        battingChoices={openingBatterChoices}
+        jokerId={match.joker?.playerId}
         onConfirm={selectOpeningBatsmen}
         onBackToInningsBreak={currentInningsIndex === 1 && !(current.events ?? []).some((event) => event.type === 'ball') ? undoLastBall : undefined}
       />
@@ -635,7 +651,7 @@ export function LiveScorerScreen() {
         title="Select Bowler"
       >
         <div className="space-y-2 max-h-64 overflow-y-auto">
-          {bowlingTeam.players.map((player) => {
+          {bowlerChoices.map((player) => {
             const stats = derived?.bowling[player.id]
             const disabled = player.id === lastBowlerId && bowlingTeam.players.length > 2
             return (
@@ -646,7 +662,7 @@ export function LiveScorerScreen() {
                 onClick={() => selectBowler(player.id)}
                 className={`sheet-option ${disabled ? 'disabled' : 'btn-press'}`}
               >
-                <span className="font-medium" style={{ color: '#111' }}>{player.name}</span>
+                <span className="font-medium" style={{ color: '#111' }}>{player.name}{player.id === match.joker?.playerId ? ' (J)' : ''}</span>
                 <span className="text-xs" style={{ color: '#999' }}>
                   {stats?.oversDisplay ?? '0.0'} ov · {stats?.runs ?? 0}r · {stats?.wickets ?? 0}w
                 </span>
@@ -668,14 +684,14 @@ export function LiveScorerScreen() {
             onClick={() => setRetireTargetIsStriker(true)}
             className={`toss-btn ${retireTargetIsStriker ? 'selected' : ''}`}
           >
-            Striker: {getPlayerById(battingTeam, strikerId)?.name}
+            Striker: {getPlayerById(battingTeam, strikerId)?.name}{strikerId === match.joker?.playerId ? ' (J)' : ''}
           </button>
           <button
             type="button"
             onClick={() => setRetireTargetIsStriker(false)}
             className={`toss-btn ${!retireTargetIsStriker ? 'selected' : ''}`}
           >
-            Non-Striker: {getPlayerById(battingTeam, nonStrikerId)?.name}
+            Non-Striker: {getPlayerById(battingTeam, nonStrikerId)?.name}{nonStrikerId === match.joker?.playerId ? ' (J)' : ''}
           </button>
         </div>
 
@@ -688,7 +704,7 @@ export function LiveScorerScreen() {
         >
           {remainingBatsmen.map((p) => (
             <option key={p.id} value={p.id}>
-              {p.name}
+              {p.name}{p.id === match.joker?.playerId ? ' (J)' : ''}
             </option>
           ))}
         </select>
@@ -785,7 +801,8 @@ export function LiveScorerScreen() {
       <OpeningBatsmenSheet
         open={editOpenersOpen}
         onClose={() => { setEditOpenersOpen(false); setBallLogOpen(true) }}
-        battingTeam={battingTeam}
+        battingChoices={openingBatterChoices}
+        jokerId={match.joker?.playerId}
         initialStrikerId={current?.events?.find((event) => event.type === 'openers')?.type === 'openers'
           ? current.events.find((event) => event.type === 'openers')?.strikerId : undefined}
         initialNonStrikerId={current?.events?.find((event) => event.type === 'openers')?.type === 'openers'
@@ -813,7 +830,7 @@ export function LiveScorerScreen() {
           {(isStrikerOnlyWicket ? [strikerId] : [strikerId, nonStrikerId]).map((id) => (
             <button key={id} type="button" onClick={() => setOutBatsmanId(id)}
               className={`toss-btn ${outBatsmanId === id ? 'selected' : ''}`} style={{ padding: '10px', fontSize: '13px' }}>
-              {getPlayerById(battingTeam, id)?.name}
+              {getPlayerById(battingTeam, id)?.name}{id === match.joker?.playerId ? ' (J)' : ''}
             </button>
           ))}
         </div>
@@ -823,10 +840,10 @@ export function LiveScorerScreen() {
             <div className="flex flex-wrap gap-2 mb-4">
               <button type="button" onClick={() => setFielderId('')} className={`toss-btn ${!fielderId ? 'selected' : ''}`} style={{ padding: '8px 12px', fontSize: '12px' }}>Skip</button>
               {bowlingTeam.players.filter((player) => effectiveWicketType !== 'caught' || player.id !== current.currentBowlerId).map((player) => (
-                <button key={player.id} type="button" onClick={() => setFielderId(player.id)} className={`toss-btn ${fielderId === player.id ? 'selected' : ''}`} style={{ padding: '8px 12px', fontSize: '12px' }}>{player.name}</button>
+                <button key={player.id} type="button" onClick={() => setFielderId(player.id)} className={`toss-btn ${fielderId === player.id ? 'selected' : ''}`} style={{ padding: '8px 12px', fontSize: '12px' }}>{player.name}{player.id === match.joker?.playerId ? ' (J)' : ''}</button>
               ))}
               {effectiveWicketType === 'caught' && current.currentBowlerId && (
-                <button type="button" onClick={() => setFielderId(current.currentBowlerId)} className={`toss-btn ${fielderId === current.currentBowlerId ? 'selected' : ''}`} style={{ padding: '8px 12px', fontSize: '12px' }}>{getPlayerById(bowlingTeam, current.currentBowlerId)?.name}</button>
+                <button type="button" onClick={() => setFielderId(current.currentBowlerId)} className={`toss-btn ${fielderId === current.currentBowlerId ? 'selected' : ''}`} style={{ padding: '8px 12px', fontSize: '12px' }}>{getPlayerById(bowlingTeam, current.currentBowlerId)?.name}{current.currentBowlerId === match.joker?.playerId ? ' (J)' : ''}</button>
               )}
             </div>
           </>
@@ -845,7 +862,7 @@ export function LiveScorerScreen() {
           <>
             <p className="text-sm font-medium mb-2" style={{ color: '#111' }}>New batsman</p>
             <select value={newBatsmanId || remainingBatsmen[0]?.id} onChange={(e) => setNewBatsmanId(e.target.value)} className="w-full rounded-xl py-3 px-4 mb-4" style={{ fontSize: '14px' }}>
-              {remainingBatsmen.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+              {remainingBatsmen.map((p) => <option key={p.id} value={p.id}>{p.name}{p.id === match.joker?.playerId ? ' (J)' : ''}</option>)}
             </select>
           </>
         )}
